@@ -6837,17 +6837,29 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             return Ok(None);
         }
 
-        let path = if command.starts_with('/') {
+        let requested_path = if command.starts_with('/') {
             normalize_path(command)
         } else {
             normalize_path(&format!("{cwd}/{command}"))
         };
+        // Keep the registered projection spelling through final-symlink
+        // resolution. Package commands live at `/opt/agentos/bin/<name>` as
+        // symlinks into immutable package mounts; the registry, rather than
+        // archive mode metadata, is the authority that makes that projection
+        // executable. This also keeps platforms which do not preserve POSIX
+        // tar execute bits aligned with `/bin/<name>` command stubs.
+        let registered_projection = self
+            .resolve_registered_command_path(&requested_path)
+            .is_some();
         // exec(2) follows symlinks, and a symlink target may live in a different
         // mount (e.g. `/opt/agentos/bin/<cmd>` is its own single-symlink mount
         // pointing into a package tar mount). Resolve the real path before
         // stat-ing / reading the executable so cross-mount symlinked commands
         // exec their real target instead of failing to read the symlink node.
-        let path = self.filesystem.realpath(&path).unwrap_or(path);
+        let path = self
+            .filesystem
+            .realpath(&requested_path)
+            .unwrap_or_else(|_| requested_path.clone());
         let stat = self.filesystem.stat(&path)?;
         if stat.is_directory {
             return Err(KernelError::new(
@@ -6858,7 +6870,8 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         // Registered command projections are executable kernel objects even
         // when their host/package backing blob is stored as 0644. Ordinary
         // VFS files must still carry a real execute bit, as Linux requires.
-        let registered = self.resolve_registered_command_path(&path).is_some();
+        let registered =
+            registered_projection || self.resolve_registered_command_path(&path).is_some();
         if let Some(pid) = parent_pid {
             if !registered {
                 self.check_dac_access(pid, &path, DAC_EXECUTE)?;
@@ -6869,7 +6882,11 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                 format!("permission denied, execute '{path}'"),
             ));
         }
-        Ok(Some(path))
+        Ok(Some(if registered_projection {
+            requested_path
+        } else {
+            path
+        }))
     }
 
     fn validate_wasm_exec_image_inner(
@@ -6913,7 +6930,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
 
     fn resolve_registered_command_path(&self, path: &str) -> Option<String> {
         let normalized = normalize_path(path);
-        for prefix in ["/bin/", "/usr/bin/", "/usr/local/bin/"] {
+        for prefix in ["/bin/", "/usr/bin/", "/usr/local/bin/", "/opt/agentos/bin/"] {
             let Some(name) = normalized.strip_prefix(prefix) else {
                 continue;
             };
@@ -10263,6 +10280,34 @@ mod tests {
                 .validate_executable_path("/image-link", "/")
                 .expect("exec must follow final symlink"),
             "/plain"
+        );
+
+        kernel
+            .register_driver(CommandDriver::new("packages", ["cat"]))
+            .expect("register projected package command");
+        kernel
+            .mkdir("/opt/agentos/pkgs/coreutils/1.0.0/bin", true)
+            .expect("create projected package directory");
+        kernel
+            .write_file(
+                "/opt/agentos/pkgs/coreutils/1.0.0/bin/cat",
+                b"\0asm\x01\0\0\0".to_vec(),
+            )
+            .expect("write package command without archive execute bits");
+        kernel
+            .mkdir("/opt/agentos/bin", true)
+            .expect("create package command path");
+        kernel
+            .symlink(
+                "/opt/agentos/pkgs/coreutils/1.0.0/bin/cat",
+                "/opt/agentos/bin/cat",
+            )
+            .expect("project package command");
+        assert_eq!(
+            kernel
+                .validate_executable_path("/opt/agentos/bin/cat", "/")
+                .expect("registered package projection must be executable"),
+            "/opt/agentos/bin/cat"
         );
 
         kernel
