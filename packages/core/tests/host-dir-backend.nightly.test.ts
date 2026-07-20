@@ -156,15 +156,45 @@ describe("host_dir native mount integration", () => {
 		});
 		await vm.closeProcessStdin(pid);
 		const exitCode = await vm.waitProcess(pid);
+		const directHostAtExit = fs.readFileSync(
+			path.join(tmpDir, "direct-output.txt"),
+			"utf8",
+		);
+		const pipelineHostAtExit = fs.readFileSync(
+			path.join(tmpDir, "result.txt"),
+			"utf8",
+		);
+		const directGuestAtExit = await vm.readTextFile(
+			"/hostmnt/direct-output.txt",
+		);
+		const pipelineGuestAtExit = await vm.readTextFile("/hostmnt/result.txt");
+		await new Promise((resolve) => setTimeout(resolve, 500));
+		const directHostAfterDelay = fs.readFileSync(
+			path.join(tmpDir, "direct-output.txt"),
+			"utf8",
+		);
+		const pipelineHostAfterDelay = fs.readFileSync(
+			path.join(tmpDir, "result.txt"),
+			"utf8",
+		);
+		if (directHostAtExit !== "beta\n" || pipelineHostAtExit !== "BETA\n") {
+			console.error(
+				"redirect diagnostics",
+				JSON.stringify({
+					directHostAtExit,
+					pipelineHostAtExit,
+					directGuestAtExit,
+					pipelineGuestAtExit,
+					directHostAfterDelay,
+					pipelineHostAfterDelay,
+				}),
+			);
+		}
 
 		expect(exitCode, stderr || stdout).toBe(0);
 		expect(stdout).toBe("123");
-		expect(
-			fs.readFileSync(path.join(tmpDir, "direct-output.txt"), "utf8"),
-		).toBe("beta\n");
-		expect(fs.readFileSync(path.join(tmpDir, "result.txt"), "utf8")).toBe(
-			"BETA\n",
-		);
+		expect(directHostAtExit).toBe("beta\n");
+		expect(pipelineHostAtExit).toBe("BETA\n");
 	});
 
 	test("symlink escape attempt is blocked", async () => {
