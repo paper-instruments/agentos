@@ -81,7 +81,6 @@ where
 #[derive(Clone)]
 pub(crate) struct HostDirFilesystem {
     root: Arc<Dir>,
-    canonical_root: PathBuf,
     max_read_bytes: Option<usize>,
 }
 
@@ -117,12 +116,8 @@ impl HostDirFilesystem {
                 format!("host_dir root is not a directory: {display}"),
             ));
         }
-        let canonical_root = root
-            .canonicalize(".")
-            .map_err(|error| io_error_to_vfs("realpath", &display, error))?;
         Ok(Self {
             root: Arc::new(root),
-            canonical_root,
             max_read_bytes,
         })
     }
@@ -442,19 +437,7 @@ impl VirtualFileSystem for HostDirFilesystem {
             .root
             .canonicalize(relative)
             .map_err(|error| io_error_to_vfs("realpath", path, error))?;
-        // cap-std's manual Windows canonicalizer currently includes the
-        // capability directory's host basename in its otherwise-relative
-        // result. Strip the canonical capability root before translating the
-        // resolved path back into the guest namespace. Requiring that prefix
-        // also preserves the confinement check for every nested path.
-        let relative_canonical = canonical.strip_prefix(&self.canonical_root).map_err(|_| {
-            VfsError::access_denied(
-                "realpath",
-                path,
-                Some("canonical path escapes host directory"),
-            )
-        })?;
-        Self::virtual_path(relative_canonical)
+        Self::virtual_path(&canonical)
     }
 
     fn symlink(&mut self, target: &str, link_path: &str) -> VfsResult<()> {
