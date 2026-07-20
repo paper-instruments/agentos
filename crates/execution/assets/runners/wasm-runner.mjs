@@ -9775,6 +9775,34 @@ const hostFsImport = {
     }
   },
   path_mode(fd, pathPtr, pathLen, followSymlinks) {
+    const operand = kernelPathOperand(fd, pathPtr, pathLen);
+    if (operand) {
+      try {
+        const stat = callSyncRpc('process.path_stat_at', [
+          operand.dirFd,
+          operand.path,
+          Number(followSymlinks) !== 0,
+        ]);
+        const mode = Number(stat?.mode) >>> 0;
+        if (mode !== 0) {
+          traceHostProcess('host-fs-path-mode', {
+            target: operand.path,
+            followSymlinks: Number(followSymlinks) >>> 0,
+            mode,
+            source: 'kernel',
+          });
+          return mode;
+        }
+      } catch (error) {
+        // Host-only runtime mappings are not guaranteed to exist in the guest
+        // kernel. Preserve the existing host-stat fallback for those paths.
+        // A permission or integrity error must remain fail-closed instead of
+        // being bypassed by a direct host stat.
+        if (error?.code !== 'ENOENT' && error?.code !== 'ENOTDIR') {
+          return 0;
+        }
+      }
+    }
     try {
       const target = resolvePathOpenGuestPath(fd, pathPtr, pathLen);
       if (typeof target !== 'string') {
@@ -9794,6 +9822,7 @@ const hostFsImport = {
         hostPath,
         followSymlinks: Number(followSymlinks) >>> 0,
         mode,
+        source: 'host',
       });
       return mode;
     } catch {

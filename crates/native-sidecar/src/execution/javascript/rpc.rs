@@ -571,6 +571,7 @@ fn wasm_process_path_stat_value(stat: agentos_kernel::vfs::VirtualStat) -> Value
         "ino": stat.ino,
         "filetype": filetype,
         "nlink": stat.nlink,
+        "mode": stat.mode,
         "size": stat.size,
         "atimeMs": stat.atime_ms,
         "mtimeMs": stat.mtime_ms,
