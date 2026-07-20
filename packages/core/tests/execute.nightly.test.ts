@@ -52,9 +52,13 @@ describe("command execution", () => {
 			"printf found > marker.txt && cat marker.txt",
 			{
 				cwd: "/tmp/testdir",
+				env:
+					process.platform === "win32"
+						? { AGENTOS_TRACE_HOST_PROCESS: "1" }
+						: undefined,
 			},
 		);
-		expect(result.exitCode).toBe(0);
+		expect(result.exitCode, result.stderr || result.stdout).toBe(0);
 		expect(result.stdout).toContain("found");
 	});
 
