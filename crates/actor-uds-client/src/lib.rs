@@ -20,10 +20,20 @@ use generated::v1 as wire;
 pub use generated::v1::SqlValue;
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
+#[cfg(unix)]
 use tokio::net::UnixStream;
 use tokio::sync::Mutex;
+#[cfg(windows)]
+use tokio::time::sleep;
 use tokio::time::timeout;
 use vbare::OwnedVersionedData;
+
+#[cfg(unix)]
+type ActorStream = UnixStream;
+#[cfg(windows)]
+type ActorStream = NamedPipeClient;
 
 const PROTOCOL_VERSION: u16 = 1;
 const MAX_FRAME_BYTES: u32 = 32 * 1024 * 1024;
@@ -85,7 +95,7 @@ struct Inner {
 }
 
 struct Connection {
-    stream: UnixStream,
+    stream: ActorStream,
     max_frame_bytes: u32,
 }
 
@@ -243,7 +253,7 @@ impl ActorUdsClient {
 }
 
 async fn connect(path: &Path, token_value: &str) -> Result<Connection, ActorUdsError> {
-    let mut stream = timeout(DEFAULT_CONNECT_TIMEOUT, UnixStream::connect(path))
+    let mut stream = timeout(DEFAULT_CONNECT_TIMEOUT, connect_stream(path))
         .await
         .map_err(|_| ActorUdsError::Timeout {
             operation: "connect",
@@ -273,7 +283,32 @@ async fn connect(path: &Path, token_value: &str) -> Result<Connection, ActorUdsE
     }
 }
 
-async fn write_frame(stream: &mut UnixStream, payload: &[u8]) -> Result<(), ActorUdsError> {
+#[cfg(unix)]
+async fn connect_stream(path: &Path) -> io::Result<ActorStream> {
+    UnixStream::connect(path).await
+}
+
+#[cfg(windows)]
+async fn connect_stream(path: &Path) -> io::Result<ActorStream> {
+    const ERROR_FILE_NOT_FOUND: i32 = 2;
+    const ERROR_PIPE_BUSY: i32 = 231;
+    loop {
+        match ClientOptions::new().open(path) {
+            Ok(stream) => return Ok(stream),
+            Err(error)
+                if matches!(
+                    error.raw_os_error(),
+                    Some(ERROR_FILE_NOT_FOUND) | Some(ERROR_PIPE_BUSY)
+                ) =>
+            {
+                sleep(Duration::from_millis(10)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+async fn write_frame(stream: &mut ActorStream, payload: &[u8]) -> Result<(), ActorUdsError> {
     let length = u32::try_from(payload.len())
         .map_err(|_| ActorUdsError::Protocol("frame length exceeds u32".to_owned()))?;
     stream.write_u32(length).await?;
@@ -283,7 +318,7 @@ async fn write_frame(stream: &mut UnixStream, payload: &[u8]) -> Result<(), Acto
 }
 
 async fn read_frame(
-    stream: &mut UnixStream,
+    stream: &mut ActorStream,
     max_frame_bytes: u32,
 ) -> Result<Vec<u8>, ActorUdsError> {
     let length = stream.read_u32().await?;

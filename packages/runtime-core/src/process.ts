@@ -1,5 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import type { Duplex } from "node:stream";
+import { randomUUID } from "node:crypto";
+import { createServer, type Server } from "node:net";
+import { Duplex, PassThrough } from "node:stream";
 
 export {
 	SidecarProcessError,
@@ -57,6 +59,28 @@ export class StdioSidecarProcess {
 	}
 
 	static spawn(options: StdioSidecarProcessSpawnOptions): StdioSidecarProcess {
+		if (process.platform === "win32") {
+			const channel = createWindowsControlChannel();
+			const child = spawn(options.command, options.args ?? [], {
+				cwd: options.cwd,
+				env: {
+					...process.env,
+					AGENTOS_CONTROL_PIPE: channel.pipeName,
+				},
+				stdio: ["pipe", "pipe", "pipe"],
+			}) as unknown as ChildProcessWithoutNullStreams;
+			try {
+				const sidecar = new StdioSidecarProcess(child, channel.control);
+				const cleanup = () => channel.close();
+				child.once("exit", cleanup);
+				child.once("error", cleanup);
+				return sidecar;
+			} catch (error) {
+				channel.close();
+				child.kill();
+				throw error;
+			}
+		}
 		const child = spawn(options.command, options.args ?? [], {
 			cwd: options.cwd,
 			stdio: ["pipe", "pipe", "pipe", "pipe"],
@@ -139,6 +163,49 @@ export class StdioSidecarProcess {
 			}, timeoutMs);
 		});
 	}
+}
+
+interface WindowsControlChannel {
+	pipeName: string;
+	control: Duplex;
+	close(): void;
+}
+
+function createWindowsControlChannel(): WindowsControlChannel {
+	const pipeName = `\\\\.\\pipe\\agentos-control-${process.pid}-${randomUUID()}`;
+	const inbound = new PassThrough();
+	const outbound = new PassThrough();
+	const control = Duplex.from({ readable: inbound, writable: outbound });
+	let socketConnected = false;
+	let closed = false;
+	let server: Server;
+	server = createServer((socket) => {
+		if (socketConnected) {
+			socket.destroy();
+			return;
+		}
+		socketConnected = true;
+		server.close();
+		socket.on("error", (error) => control.destroy(error));
+		socket.on("close", () => inbound.end());
+		outbound.pipe(socket);
+		socket.pipe(inbound);
+	});
+	server.on("error", (error) => control.destroy(error));
+	server.listen(pipeName);
+
+	return {
+		pipeName,
+		control,
+		close() {
+			if (closed) return;
+			closed = true;
+			server.close();
+			control.destroy();
+			inbound.destroy();
+			outbound.destroy();
+		},
+	};
 }
 
 function requireControlStream(child: ChildProcessWithoutNullStreams): Duplex {

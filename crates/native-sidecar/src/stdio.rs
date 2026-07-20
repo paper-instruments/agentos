@@ -29,8 +29,11 @@ use std::error::Error;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
+#[cfg(unix)]
 use std::os::fd::OwnedFd;
+#[cfg(unix)]
 use std::os::unix::fs::{symlink as create_symlink, MetadataExt, PermissionsExt};
+#[cfg(unix)]
 use std::os::unix::net::UnixStream as StdUnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -38,9 +41,20 @@ use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::Notify;
 use tokio::time;
+
+#[cfg(unix)]
+pub type ControlEndpoint = OwnedFd;
+#[cfg(windows)]
+pub type ControlEndpoint = String;
+#[cfg(unix)]
+type ControlStream = tokio::net::UnixStream;
+#[cfg(windows)]
+type ControlStream = NamedPipeClient;
 
 // Cadence of sidecar→host heartbeat frames. The host treats sustained inbound
 // silence (several missed beats) as a dead or wedged sidecar and tears the
@@ -699,13 +713,13 @@ fn wire_protocol_error(error: ProtocolCodecError) -> SidecarError {
     SidecarError::InvalidState(format!("invalid generated wire protocol frame: {error}"))
 }
 
-pub fn run(control_fd: OwnedFd) -> Result<(), Box<dyn Error>> {
-    run_with_extensions(Vec::new(), control_fd)
+pub fn run(control_endpoint: ControlEndpoint) -> Result<(), Box<dyn Error>> {
+    run_with_extensions(Vec::new(), control_endpoint)
 }
 
 pub fn run_with_extensions(
     extensions: Vec<Box<dyn Extension>>,
-    control_fd: OwnedFd,
+    control_endpoint: ControlEndpoint,
 ) -> Result<(), Box<dyn Error>> {
     let config = NativeSidecarConfig {
         compile_cache_root: Some(default_compile_cache_root()),
@@ -720,22 +734,27 @@ pub fn run_with_extensions(
     if let Err(error) = agentos_execution::v8_host::ensure_runtime_initialized(&runtime_context) {
         eprintln!("embedded V8 runtime init failed at startup: {error}");
     }
-    runtime.block_on(run_async(extensions, config, runtime_context, control_fd))
+    runtime.block_on(run_async(
+        extensions,
+        config,
+        runtime_context,
+        control_endpoint,
+    ))
 }
 
 async fn run_async(
     extensions: Vec<Box<dyn Extension>>,
     config: NativeSidecarConfig,
     runtime_context: agentos_runtime::RuntimeContext,
-    control_fd: OwnedFd,
+    control_endpoint: ControlEndpoint,
 ) -> Result<(), Box<dyn Error>> {
     let callback_limits = FrameSidecarRequestLimits::from_config(&config);
     let protocol = config.runtime.protocol.clone();
     let max_frame_bytes = config.max_frame_bytes;
     validate_protocol_transport_config(&protocol, max_frame_bytes)?;
     let codec = WireFrameCodec::new(max_frame_bytes);
-    let control_stream = inherited_control_stream(control_fd)?;
-    let (mut control_reader, mut control_writer) = control_stream.into_split();
+    let control_stream = connect_control_stream(control_endpoint).await?;
+    let (mut control_reader, mut control_writer) = tokio::io::split(control_stream);
     let metrics = runtime_context.metrics().clone();
     let ingress_budget = ProtocolBudget::new(
         ProtocolBudgetConfig {
@@ -1412,10 +1431,37 @@ fn read_frame(
     }))
 }
 
-fn inherited_control_stream(fd: OwnedFd) -> Result<tokio::net::UnixStream, io::Error> {
+#[cfg(unix)]
+async fn connect_control_stream(fd: ControlEndpoint) -> Result<ControlStream, io::Error> {
     let stream = StdUnixStream::from(fd);
     stream.set_nonblocking(true)?;
     tokio::net::UnixStream::from_std(stream)
+}
+
+#[cfg(windows)]
+async fn connect_control_stream(pipe_name: ControlEndpoint) -> Result<ControlStream, io::Error> {
+    const ERROR_FILE_NOT_FOUND: i32 = 2;
+    const ERROR_PIPE_BUSY: i32 = 231;
+    const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+    let connect = async {
+        loop {
+            match ClientOptions::new().open(&pipe_name) {
+                Ok(stream) => return Ok(stream),
+                Err(error)
+                    if matches!(
+                        error.raw_os_error(),
+                        Some(ERROR_FILE_NOT_FOUND) | Some(ERROR_PIPE_BUSY)
+                    ) =>
+                {
+                    time::sleep(Duration::from_millis(10)).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    };
+    time::timeout(CONNECT_TIMEOUT, connect)
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "AgentOS control pipe timed out"))?
 }
 
 async fn read_frame_async(
