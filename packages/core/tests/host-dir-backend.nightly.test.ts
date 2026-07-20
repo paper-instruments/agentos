@@ -3,6 +3,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import coreutils from "@agentos-software/coreutils";
+import grep from "@agentos-software/grep";
+import sed from "@agentos-software/sed";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentOs, createHostDirBackend } from "../src/index.js";
 
@@ -108,6 +110,52 @@ describe("host_dir native mount integration", () => {
 		expect(result.stdout).toBe("written");
 		expect(fs.readFileSync(path.join(tmpDir, "from-guest.txt"), "utf8")).toBe(
 			"written",
+		);
+	});
+
+	test("Bash waits for an external pipeline redirected into a host mount", async () => {
+		if (process.platform !== "win32") fs.chmodSync(tmpDir, 0o700);
+		vm = await AgentOs.create({
+			permissions: {
+				fs: "allow",
+				network: "deny",
+				childProcess: "allow",
+				process: "allow",
+				env: "allow",
+				binding: "allow",
+			},
+			defaultSoftware: false,
+			software: [coreutils, grep, sed],
+			mounts: [
+				{
+					path: "/hostmnt",
+					plugin: createHostDirBackend({ hostPath: tmpDir, readOnly: false }),
+				},
+			],
+		});
+
+		const { pid } = vm.spawn(
+			"bash",
+			[
+				"-lc",
+				"set -euo pipefail; printf 'alpha\\nbeta\\n' | grep beta | sed 's/beta/BETA/' > result.txt; for value in 1 2 3; do printf '%s' \"$value\"; done",
+			],
+			{ cwd: "/hostmnt" },
+		);
+		let stdout = "";
+		let stderr = "";
+		vm.onProcessOutput(pid, (event) => {
+			const text = new TextDecoder().decode(event.data);
+			if (event.stream === "stdout") stdout += text;
+			else stderr += text;
+		});
+		await vm.closeProcessStdin(pid);
+		const exitCode = await vm.waitProcess(pid);
+
+		expect(exitCode, stderr || stdout).toBe(0);
+		expect(stdout).toBe("123");
+		expect(fs.readFileSync(path.join(tmpDir, "result.txt"), "utf8")).toBe(
+			"BETA\n",
 		);
 	});
 

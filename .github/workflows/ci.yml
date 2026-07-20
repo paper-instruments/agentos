@@ -45,8 +45,16 @@ jobs:
       - name: Restore JavaScript build outputs
         shell: pwsh
         run: tar -xzf ci-artifacts/js/agentos-js-dist.tar.gz
-      - name: Assemble pinned core command package
-        run: pnpm --filter @agentos-software/coreutils build:runtime
+      - name: Assemble pinned command packages under test
+        shell: pwsh
+        run: |
+          pnpm --filter @agentos-software/coreutils build:runtime
+          pnpm --filter @agentos-software/grep exec agentos-toolchain stage --commands-dir ../../packages/runtime-core/commands --if-missing error
+          pnpm --filter @agentos-software/grep exec tsc
+          pnpm --filter @agentos-software/grep exec agentos-toolchain build
+          pnpm --filter @agentos-software/sed exec agentos-toolchain stage --commands-dir ../../packages/runtime-core/commands --if-missing error
+          pnpm --filter @agentos-software/sed exec tsc
+          pnpm --filter @agentos-software/sed exec agentos-toolchain build
       - name: Build Windows sidecars
         run: cargo build -p agentos-sidecar -p agentos-native-sidecar
       - name: Test Windows workspace confinement and Bash
