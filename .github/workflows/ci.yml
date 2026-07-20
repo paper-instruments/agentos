@@ -55,7 +55,7 @@ jobs:
           AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-sidecar.exe
           AGENTOS_NATIVE_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-native-sidecar.exe
         run: >-
-          pnpm --dir packages/core exec vitest run
+          pnpm --filter @rivet-dev/agentos-core exec vitest run
           tests/host-dir-backend.nightly.test.ts
           tests/execute.nightly.test.ts
           --reporter=verbose
