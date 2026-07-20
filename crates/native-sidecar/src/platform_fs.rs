@@ -14,7 +14,7 @@ use std::os::unix::fs::PermissionsExt;
 pub(crate) fn set_mode(path: &Path, mode: u32) -> io::Result<()> {
     #[cfg(unix)]
     {
-        return fs::set_permissions(path, fs::Permissions::from_mode(mode));
+        fs::set_permissions(path, fs::Permissions::from_mode(mode))
     }
     #[cfg(windows)]
     {
@@ -30,7 +30,7 @@ pub(crate) fn set_mode(path: &Path, mode: u32) -> io::Result<()> {
 pub(crate) fn metadata_mode(metadata: &fs::Metadata) -> u32 {
     #[cfg(unix)]
     {
-        return metadata.permissions().mode();
+        metadata.permissions().mode()
     }
     #[cfg(windows)]
     {
@@ -51,7 +51,7 @@ pub(crate) fn metadata_mode(metadata: &fs::Metadata) -> u32 {
 pub(crate) fn create_symlink(target: impl AsRef<Path>, link: impl AsRef<Path>) -> io::Result<()> {
     #[cfg(unix)]
     {
-        return std::os::unix::fs::symlink(target, link);
+        std::os::unix::fs::symlink(target, link)
     }
     #[cfg(windows)]
     {

@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+
 const DEFAULT_ALLOWED_NODE_BUILTINS: &[&str] = &[
     "assert",
     "buffer",

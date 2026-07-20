@@ -32,8 +32,6 @@ use std::io::{self, Read, Write};
 #[cfg(unix)]
 use std::os::fd::OwnedFd;
 #[cfg(unix)]
-use std::os::unix::fs::MetadataExt;
-#[cfg(unix)]
 use std::os::unix::net::UnixStream as StdUnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};

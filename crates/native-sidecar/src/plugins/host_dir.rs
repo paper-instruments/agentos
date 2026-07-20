@@ -1006,10 +1006,10 @@ impl HostDirFilesystem {
     }
 
     fn virtual_mode(host_mode: u32, is_directory: bool, is_symlink: bool) -> u32 {
-        let file_type = host_mode & SFlag::S_IFMT.bits() as u32;
-        let permissions = if is_symlink {
-            0o777
-        } else if is_directory {
+        // POSIX reserves 0170000 for the file type. Using the stable wire-mode
+        // mask avoids nix exposing mode_t as u16 on macOS and u32 on Linux.
+        let file_type = host_mode & 0o170000;
+        let permissions = if is_symlink || is_directory {
             0o777
         } else {
             0o666 | (host_mode & 0o111)

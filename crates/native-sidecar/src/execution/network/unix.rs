@@ -955,6 +955,7 @@ impl ActiveUnixSocket {
 #[derive(Clone, Debug)]
 pub(in crate::execution) enum NativeUnixConnectTarget {
     Path(PathBuf),
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     Abstract(Vec<u8>),
 }
 

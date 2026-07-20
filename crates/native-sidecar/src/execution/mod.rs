@@ -265,15 +265,13 @@ use std::net::{
 #[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
 #[cfg(unix)]
-use std::os::unix::fs::MetadataExt;
-#[cfg(unix)]
 use std::os::unix::net::{SocketAddr as UnixSocketAddr, UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::task::{Context, Poll, Wake, Waker};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::sync::mpsc::{
     channel as tokio_channel, error::TryRecvError as TokioTryRecvError, Receiver as TokioReceiver,

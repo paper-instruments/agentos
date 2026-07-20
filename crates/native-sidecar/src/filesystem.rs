@@ -75,7 +75,7 @@ use std::io::{Read, Write};
 #[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd};
 #[cfg(unix)]
-use std::os::unix::fs::{FileExt, MetadataExt, PermissionsExt};
+use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -2217,17 +2217,13 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 Some(MappedRuntimeHostAccess::Writable(mapped_host)) => {
                     if mapped_runtime_relative_path(&mapped_host)? == Path::new(".") {
                         create_mapped_runtime_root_directory(&mapped_host, recursive)?;
+                    } else if recursive {
+                        ensure_mapped_runtime_parent_dirs(&mapped_host, "fs.mkdir")?;
+                        let parent = open_mapped_runtime_parent_beneath(&mapped_host, "fs.mkdir")?;
+                        create_mapped_runtime_directory(&parent, path, true)?;
                     } else {
-                        if recursive {
-                            ensure_mapped_runtime_parent_dirs(&mapped_host, "fs.mkdir")?;
-                            let parent =
-                                open_mapped_runtime_parent_beneath(&mapped_host, "fs.mkdir")?;
-                            create_mapped_runtime_directory(&parent, path, true)?;
-                        } else {
-                            let parent =
-                                open_mapped_runtime_parent_beneath(&mapped_host, "fs.mkdir")?;
-                            create_mapped_runtime_directory(&parent, path, false)?;
-                        }
+                        let parent = open_mapped_runtime_parent_beneath(&mapped_host, "fs.mkdir")?;
+                        create_mapped_runtime_directory(&parent, path, false)?;
                     }
                     return Ok(Value::Null);
                 }
