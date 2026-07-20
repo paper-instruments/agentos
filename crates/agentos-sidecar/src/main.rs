@@ -10,6 +10,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 const CONTROL_FD: i32 = 3;
 
 fn main() {
+    agentos_native_sidecar::exit_if_snapshot_helper_requested();
     init_tracing();
     tracing::info!(target: "agentos_native_sidecar::perf", "sidecar process started");
     #[cfg(unix)]

@@ -8,6 +8,7 @@ use nix::fcntl::{fcntl, FcntlArg};
 const CONTROL_FD: i32 = 3;
 
 fn main() {
+    agentos_native_sidecar::exit_if_snapshot_helper_requested();
     // Default to WARN so near-limit / backpressure warnings actually surface
     // (they were swallowed at ERROR-only); operators can tune via AGENTOS_LOG
     // (e.g. `error` to quiet, `debug` for queue snapshots). Logs MUST go to stderr:
