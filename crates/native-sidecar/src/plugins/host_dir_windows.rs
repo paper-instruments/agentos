@@ -20,6 +20,7 @@ use agentos_kernel::vfs::{
     normalize_path, VfsError, VfsResult, VirtualDirEntry, VirtualFileSystem, VirtualStat,
     VirtualTimeSpec, VirtualUtimeSpec,
 };
+use cap_fs_ext::MetadataExt;
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, File, FileExt, Metadata, OpenOptions};
 use serde::Deserialize;
@@ -198,7 +199,11 @@ impl HostDirFilesystem {
             mode: mode_type | permissions,
             size: metadata.len(),
             blocks: metadata.len().div_ceil(512),
-            dev: 0,
+            // GNU tools use (dev, ino) to reject accidental in-place output.
+            // cap-fs-ext reads the real Windows volume and file IDs through
+            // the already-confined directory capability, so distinct files
+            // do not collapse to the same synthetic identity.
+            dev: metadata.dev(),
             rdev: 0,
             is_directory,
             is_symbolic_link: is_symlink,
@@ -209,8 +214,8 @@ impl HostDirFilesystem {
             ctime_ms: mtime_ms,
             ctime_nsec: mtime_nsec,
             birthtime_ms,
-            ino: 0,
-            nlink: 1,
+            ino: metadata.ino(),
+            nlink: metadata.nlink(),
             uid: 1000,
             gid: 1000,
         }

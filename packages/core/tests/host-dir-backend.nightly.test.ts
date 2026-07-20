@@ -133,6 +133,18 @@ describe("host_dir native mount integration", () => {
 				},
 			],
 		});
+		fs.writeFileSync(path.join(tmpDir, "direct-input.txt"), "alpha\nbeta\n");
+		const directResult = await vm.exec(
+			"grep beta direct-input.txt > direct-output.txt",
+			{
+				cwd: "/hostmnt",
+				env: { HOME: "/hostmnt", PWD: "/hostmnt" },
+			},
+		);
+		expect(directResult.exitCode, directResult.stderr).toBe(0);
+		expect(
+			fs.readFileSync(path.join(tmpDir, "direct-output.txt"), "utf8"),
+		).toBe("beta\n");
 
 		const { pid } = vm.spawn(
 			"bash",
@@ -140,7 +152,11 @@ describe("host_dir native mount integration", () => {
 				"-lc",
 				"set -euo pipefail; printf 'alpha\\nbeta\\n' | grep beta | sed 's/beta/BETA/' > result.txt; for value in 1 2 3; do printf '%s' \"$value\"; done",
 			],
-			{ cwd: "/hostmnt" },
+			{
+				cwd: "/hostmnt",
+				env: { HOME: "/hostmnt", PWD: "/hostmnt" },
+				stdio: "pipe",
+			},
 		);
 		let stdout = "";
 		let stderr = "";
