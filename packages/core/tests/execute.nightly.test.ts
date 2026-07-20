@@ -37,9 +37,12 @@ describe("command execution", () => {
 
 	test("exec with cwd sets working directory", async () => {
 		await vm.mkdir("/tmp/testdir");
-		const result = await vm.exec("printf found > marker.txt && cat marker.txt", {
-			cwd: "/tmp/testdir",
-		});
+		const result = await vm.exec(
+			"printf found > marker.txt && cat marker.txt",
+			{
+				cwd: "/tmp/testdir",
+			},
+		);
 		expect(result.exitCode).toBe(0);
 		expect(result.stdout).toContain("found");
 	});
@@ -59,15 +62,20 @@ describe("command execution", () => {
 		expect(result.stdout).toContain("node-output");
 	});
 
-	test(
-		"exec shell pipeline",
-		async () => {
-			for (let attempt = 0; attempt < 5; attempt += 1) {
-				const result = await vm.exec("echo hello | cat");
-				expect(result.exitCode, result.stderr || result.stdout).toBe(0);
-				expect(result.stdout).toContain("hello");
-			}
-		},
-		120_000,
-	);
+	test("exec shell pipeline", async () => {
+		for (let attempt = 0; attempt < 5; attempt += 1) {
+			const result = await vm.exec("echo hello | cat");
+			expect(result.exitCode, result.stderr || result.stdout).toBe(0);
+			expect(result.stdout).toContain("hello");
+		}
+	}, 120_000);
+
+	test("explicit Bash command runs with POSIX semantics", async () => {
+		const result = await vm.exec(
+			'bash -lc \'value=agentos; printf "%s:%s" "$value" "$(pwd)"\'',
+			{ cwd: "/tmp" },
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toBe("agentos:/tmp");
+	});
 });

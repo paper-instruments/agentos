@@ -17,6 +17,7 @@ jobs:
   windows-sidecar:
     name: Windows sidecar
     if: github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
+    needs: [checks, wasm-commands]
     runs-on: windows-latest
     env:
       AGENTOS_SKIP_NATIVE_META_BUILD: '1'
@@ -33,7 +34,29 @@ jobs:
         with:
           key: windows-sidecar-${{ hashFiles('Cargo.lock') }}
       - run: pnpm install --frozen-lockfile
-      - run: cargo check -p agentos-sidecar
+      - uses: actions/download-artifact@v4
+        with:
+          name: js-dist
+          path: ci-artifacts/js
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-commands
+          path: packages/runtime-core/commands
+      - name: Restore JavaScript build outputs
+        shell: pwsh
+        run: tar -xzf ci-artifacts/js/agentos-js-dist.tar.gz
+      - name: Build Windows sidecars
+        run: cargo build -p agentos-sidecar -p agentos-native-sidecar
+      - name: Test Windows workspace confinement and Bash
+        shell: pwsh
+        env:
+          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-sidecar.exe
+          AGENTOS_NATIVE_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-native-sidecar.exe
+        run: >-
+          pnpm --dir packages/core exec vitest run
+          tests/host-dir-backend.nightly.test.ts
+          tests/execute.nightly.test.ts
+          --reporter=verbose
 
   checks:
     name: Checks

@@ -36,6 +36,7 @@ test("discovers Agent OS sidecar resolver packages", () => {
 	);
 	if (hasAgentOsPackages) {
 		assert(names.includes("@rivet-dev/agentos-sidecar-linux-x64-gnu"));
+		assert(names.includes("@rivet-dev/agentos-sidecar-windows-x64"));
 		assert(names.includes("@rivet-dev/agentos-sidecar"));
 		assert(
 			names.indexOf("@rivet-dev/agentos-sidecar-linux-x64-gnu") <
@@ -44,6 +45,7 @@ test("discovers Agent OS sidecar resolver packages", () => {
 	}
 
 	assert(names.includes("@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu"));
+	assert(names.includes("@rivet-dev/agentos-runtime-sidecar-windows-x64"));
 	assert(names.includes("@rivet-dev/agentos-runtime-sidecar"));
 	assert(
 		names.indexOf("@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu") <
@@ -62,12 +64,14 @@ test("builds platform map for the agent-os sidecar meta package", () => {
 			"@rivet-dev/agentos-sidecar-darwin-x64",
 			"@rivet-dev/agentos-sidecar-linux-arm64-gnu",
 			"@rivet-dev/agentos-sidecar-linux-x64-gnu",
+			"@rivet-dev/agentos-sidecar-windows-x64",
 		]);
 		assert.deepEqual(metaMap.get("@rivet-dev/agentos-runtime-sidecar"), [
 			"@rivet-dev/agentos-runtime-sidecar-darwin-arm64",
 			"@rivet-dev/agentos-runtime-sidecar-darwin-x64",
 			"@rivet-dev/agentos-runtime-sidecar-linux-arm64-gnu",
 			"@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu",
+			"@rivet-dev/agentos-runtime-sidecar-windows-x64",
 		]);
 	}
 });

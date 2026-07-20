@@ -1,0 +1,26 @@
+{
+	"name": "@rivet-dev/agentos-runtime-sidecar-windows-x64",
+	"version": "0.0.1",
+	"description": "AgentOS native execution sidecar binary for Windows x64",
+	"license": "Apache-2.0",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/rivet-dev/agentos.git",
+		"directory": "packages/runtime-sidecar/npm/windows-x64"
+	},
+	"os": [
+		"win32"
+	],
+	"cpu": [
+		"x64"
+	],
+	"files": [
+		"agentos-native-sidecar.exe"
+	],
+	"scripts": {
+		"check-types": "node -e \"process.exit(0)\""
+	},
+	"engines": {
+		"node": ">=20"
+	}
+}

@@ -6,3 +6,6 @@ workflow with `npm publish` so the executable bit is preserved.
 
 The meta package `@rivet-dev/agentos-runtime-sidecar` resolves the package for the current
 platform at runtime.
+
+Supported platforms include Windows x64; Windows packages carry the native
+`agentos-native-sidecar.exe` filename.
