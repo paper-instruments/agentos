@@ -103,6 +103,58 @@ fn tar_filesystem_rejects_unsorted_index() {
     assert!(err.to_string().contains("not sorted"), "{err}");
 }
 
+#[test]
+fn tar_filesystem_treats_manifest_commands_as_executable() {
+    let path = unique_path("secure-exec-command-mode-aospkg");
+    let command = b"\0asm";
+    let manifest = encode_package_manifest(v1::PackageManifest {
+        name: String::from("command-mode"),
+        version: String::from("1.0.0"),
+        agent: None,
+        provides: None,
+        commands: vec![v1::CommandTarget {
+            command: String::from("cat"),
+            entry: String::from("bin/cat"),
+        }],
+        man_pages: Vec::new(),
+        snapshot_bundle_path: None,
+    })
+    .unwrap();
+    let index = encode_mount_index(v1::MountIndex {
+        tar_entries: vec![
+            entry("/"),
+            entry("/bin"),
+            v1::TarEntry {
+                path: String::from("/bin/cat"),
+                kind: v1::TarEntryKind::File,
+                offset: 0,
+                size: command.len() as u64,
+                // Windows archives may lose POSIX executable metadata.
+                mode: 0o100666,
+                uid: 0,
+                gid: 0,
+                mtime: 0,
+                link_target: None,
+            },
+        ],
+    })
+    .unwrap();
+    let header = encode_aospkg_header(manifest.len(), index.len()).unwrap();
+    let mut file = std::fs::File::create(&path).unwrap();
+    file.write_all(&header).unwrap();
+    file.write_all(&manifest).unwrap();
+    file.write_all(&index).unwrap();
+    file.write_all(command).unwrap();
+    file.flush().unwrap();
+
+    let mut fs = TarFileSystem::open(&path).expect("open command package");
+    let stat = fs.stat("/bin/cat").expect("stat manifest command");
+    assert_eq!(stat.mode & 0o111, 0o111);
+    assert_eq!(fs.read_file("/bin/cat").unwrap(), command);
+
+    std::fs::remove_file(path).unwrap();
+}
+
 fn entry(path: &str) -> v1::TarEntry {
     v1::TarEntry {
         path: path.to_owned(),
@@ -212,6 +264,12 @@ fn cross_validates_toolchain_built_aospkg() {
             .stat(&entry_path)
             .unwrap_or_else(|e| panic!("stat command entry {}: {e}", target.entry));
         assert!(!stat.is_directory);
+        assert_eq!(
+            stat.mode & 0o111,
+            0o111,
+            "manifest command entry {} must be executable",
+            target.entry
+        );
         // Read actual bytes through the index offset: a wrong offset would pass
         // stat (metadata comes from the index) but return garbage content.
         let bytes = fs
