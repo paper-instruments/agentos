@@ -181,10 +181,13 @@ impl HostDirFilesystem {
         };
         let permissions = if is_symlink {
             0o777
+        } else if is_directory {
+            // The Windows read-only attribute on a directory does not model
+            // POSIX search/write bits. Mount policy and the host ACL remain
+            // authoritative, while guest directories must stay traversable.
+            0o777
         } else if metadata.permissions().readonly() {
             0o444
-        } else if is_directory {
-            0o755
         } else {
             0o666
         };
@@ -208,8 +211,8 @@ impl HostDirFilesystem {
             birthtime_ms,
             ino: 0,
             nlink: 1,
-            uid: 0,
-            gid: 0,
+            uid: 1000,
+            gid: 1000,
         }
     }
 
@@ -481,10 +484,10 @@ impl VirtualFileSystem for HostDirFilesystem {
     }
 
     fn chown(&mut self, path: &str, _uid: u32, _gid: u32) -> VfsResult<()> {
-        Err(VfsError::new(
-            "EOPNOTSUPP",
-            format!("host ownership is not supported on Windows: {path}"),
-        ))
+        // NTFS ownership is not the guest's virtual POSIX ownership. Keep the
+        // host ACL/owner unchanged while reporting the mounted entry as owned
+        // by the virtual agent user.
+        self.lstat(path).map(|_| ())
     }
 
     fn utimes(&mut self, path: &str, atime_ms: u64, mtime_ms: u64) -> VfsResult<()> {

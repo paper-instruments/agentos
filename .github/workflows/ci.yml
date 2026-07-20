@@ -45,6 +45,8 @@ jobs:
       - name: Restore JavaScript build outputs
         shell: pwsh
         run: tar -xzf ci-artifacts/js/agentos-js-dist.tar.gz
+      - name: Assemble pinned core command package
+        run: pnpm --filter @agentos-software/coreutils build:runtime
       - name: Build Windows sidecars
         run: cargo build -p agentos-sidecar -p agentos-native-sidecar
       - name: Test Windows workspace confinement and Bash
@@ -151,7 +153,7 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@nightly-2026-03-01
         with:
           targets: wasm32-wasip1
       - uses: Swatinem/rust-cache@v2

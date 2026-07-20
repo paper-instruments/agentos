@@ -1,13 +1,13 @@
 // Nightly: projects the complete registry command bundle.
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import coreutils from "@agentos-software/coreutils";
 import { AgentOs } from "../src/index.js";
-import { REGISTRY_SOFTWARE } from "./helpers/registry-commands.js";
 
 describe("command execution", () => {
 	let vm: AgentOs;
 
 	beforeEach(async () => {
-		vm = await AgentOs.create({ software: REGISTRY_SOFTWARE });
+		vm = await AgentOs.create({ defaultSoftware: false, software: [coreutils] });
 	});
 
 	afterEach(async () => {

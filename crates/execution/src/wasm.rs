@@ -1638,8 +1638,7 @@ fn handle_internal_wasm_sync_rpc_request(
             .map(|()| true);
         }
         let mode = request.args.get(1).and_then(Value::as_u64).unwrap_or(0) as u32;
-        let result =
-            (|| -> Result<(), std::io::Error> { set_host_permissions(&host_path, mode) })();
+        let result: Result<(), std::io::Error> = set_host_permissions(&host_path, mode);
         return respond_wasm_sync_rpc_unit(execution, request, path, result).map(|()| true);
     }
 

@@ -2,9 +2,9 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import coreutils from "@agentos-software/coreutils";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentOs, createHostDirBackend } from "../src/index.js";
-import { REGISTRY_SOFTWARE } from "./helpers/registry-commands.js";
 
 describe("host_dir native mount integration", () => {
 	let vm: AgentOs;
@@ -57,7 +57,16 @@ describe("host_dir native mount integration", () => {
 
 	test("mounted host directory is readable from guest exec", async () => {
 		vm = await AgentOs.create({
-			software: REGISTRY_SOFTWARE,
+			permissions: {
+				fs: "allow",
+				network: "deny",
+				childProcess: "allow",
+				process: "allow",
+				env: "allow",
+				binding: "allow",
+			},
+			defaultSoftware: false,
+			software: [coreutils],
 			mounts: [
 				{
 					path: "/hostmnt",
@@ -66,8 +75,38 @@ describe("host_dir native mount integration", () => {
 			],
 		});
 		const result = await vm.exec("cat /hostmnt/hello.txt");
-		expect(result.exitCode).toBe(0);
+		expect(result.exitCode, result.stderr || result.stdout).toBe(0);
 		expect(result.stdout).toContain("hello from host");
+	});
+
+	test("guest exec writes a private writable host directory", async () => {
+		if (process.platform !== "win32") fs.chmodSync(tmpDir, 0o700);
+		vm = await AgentOs.create({
+			permissions: {
+				fs: "allow",
+				network: "deny",
+				childProcess: "allow",
+				process: "allow",
+				env: "allow",
+				binding: "allow",
+			},
+			defaultSoftware: false,
+			software: [coreutils],
+			mounts: [
+				{
+					path: "/hostmnt",
+					plugin: createHostDirBackend({ hostPath: tmpDir, readOnly: false }),
+				},
+			],
+		});
+		const result = await vm.exec(
+			"printf written > /hostmnt/from-guest.txt && cat /hostmnt/from-guest.txt",
+		);
+		expect(result.exitCode, result.stderr || result.stdout).toBe(0);
+		expect(result.stdout).toBe("written");
+		expect(fs.readFileSync(path.join(tmpDir, "from-guest.txt"), "utf8")).toBe(
+			"written",
+		);
 	});
 
 	test("symlink escape attempt is blocked", async () => {
