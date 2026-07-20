@@ -356,7 +356,7 @@ jobs:
   required:
     name: CI / Required
     if: ${{ always() && (github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')) }}
-    needs: [checks, wasm-commands, rust, core-pr, runtime-core-pr, actor-pr]
+    needs: [checks, wasm-commands, rust, windows-sidecar, core-pr, runtime-core-pr, actor-pr]
     runs-on: ubuntu-latest
     steps:
       - name: Require every PR gate
@@ -364,6 +364,7 @@ jobs:
           CHECKS_RESULT: ${{ needs.checks.result }}
           WASM_RESULT: ${{ needs.wasm-commands.result }}
           RUST_RESULT: ${{ needs.rust.result }}
+          WINDOWS_RESULT: ${{ needs.windows-sidecar.result }}
           CORE_RESULT: ${{ needs.core-pr.result }}
           RUNTIME_CORE_RESULT: ${{ needs.runtime-core-pr.result }}
           ACTOR_RESULT: ${{ needs.actor-pr.result }}
@@ -372,6 +373,7 @@ jobs:
             "$CHECKS_RESULT" \
             "$WASM_RESULT" \
             "$RUST_RESULT" \
+            "$WINDOWS_RESULT" \
             "$CORE_RESULT" \
             "$RUNTIME_CORE_RESULT" \
             "$ACTOR_RESULT"; do
