@@ -15,7 +15,10 @@ pub(crate) mod json_rpc;
 pub mod limits;
 pub(crate) mod metadata;
 pub mod package_projection;
+pub(crate) mod platform_fs;
 pub(crate) mod plugins;
+#[cfg(windows)]
+pub(crate) mod posix;
 pub mod service;
 pub(crate) mod state;
 pub mod stdio;

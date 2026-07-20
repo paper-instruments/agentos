@@ -797,6 +797,7 @@ impl ActiveUnixSocket {
         Ok(())
     }
 
+    #[cfg(unix)]
     pub(in crate::execution) fn bind_path(
         &mut self,
         host_path: &Path,
@@ -820,6 +821,16 @@ impl ActiveUnixSocket {
         self.local_registry_binding_id = Some(binding_id.to_owned());
         self.private_host_path = Some(host_path.to_path_buf());
         Ok(())
+    }
+
+    #[cfg(windows)]
+    pub(in crate::execution) fn bind_path(
+        &mut self,
+        _host_path: &Path,
+        _guest_path: &str,
+        _binding_id: &str,
+    ) -> Result<(), SidecarError> {
+        Err(abstract_unix_unsupported())
     }
 
     #[cfg(target_os = "linux")]
@@ -947,6 +958,7 @@ pub(in crate::execution) enum NativeUnixConnectTarget {
     Abstract(Vec<u8>),
 }
 
+#[cfg(unix)]
 async fn connect_native_unix_socket(
     socket: Option<Socket>,
     target: &NativeUnixConnectTarget,
@@ -987,6 +999,14 @@ async fn connect_native_unix_socket(
     }
     stream.peer_addr().map_err(sidecar_net_error)?;
     stream.into_std().map_err(sidecar_net_error)
+}
+
+#[cfg(windows)]
+async fn connect_native_unix_socket(
+    _socket: Option<Socket>,
+    _target: &NativeUnixConnectTarget,
+) -> Result<UnixStream, SidecarError> {
+    Err(abstract_unix_unsupported())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1232,6 +1252,7 @@ impl ActiveUnixListener {
         Err(abstract_unix_unsupported())
     }
 
+    #[cfg(unix)]
     #[allow(clippy::too_many_arguments)]
     pub(in crate::execution) fn listen_bound(
         mut self,
@@ -1273,6 +1294,19 @@ impl ActiveUnixListener {
         listened.description_handles = description_handles;
         listened.description_lease = Arc::clone(&self.description_lease);
         Ok(listened)
+    }
+
+    #[cfg(windows)]
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::execution) fn listen_bound(
+        self,
+        _context: JavascriptSocketPathContext,
+        _backlog: Option<u32>,
+        _capabilities: CapabilityRegistry,
+        _runtime_context: agentos_runtime::RuntimeContext,
+        _reactor_limits: ReactorIoLimits,
+    ) -> Result<Self, SidecarError> {
+        Err(abstract_unix_unsupported())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1827,6 +1861,7 @@ mod transferred_unix_alias_transport_tests {
     }
 }
 
+#[cfg(unix)]
 fn spawn_unix_plain_socket_transport(
     runtime: &agentos_runtime::RuntimeContext,
     stream: UnixStream,
@@ -1866,6 +1901,19 @@ fn spawn_unix_plain_socket_transport(
     Ok(commands)
 }
 
+#[cfg(windows)]
+fn spawn_unix_plain_socket_transport(
+    _runtime: &agentos_runtime::RuntimeContext,
+    _stream: UnixStream,
+    _resources: &Arc<ResourceLedger>,
+    _limits: ReactorIoLimits,
+    _fairness_identity: Arc<OnceLock<(u64, u64)>>,
+    _fairness_identity_committed: Arc<tokio::sync::Notify>,
+) -> Result<TokioSender<NativePlainSocketCommand>, SidecarError> {
+    Err(abstract_unix_unsupported())
+}
+
+#[cfg(unix)]
 #[allow(clippy::too_many_arguments)] // one admitted listener's owned reactor state
 fn spawn_unix_listener_acceptor(
     runtime: agentos_runtime::RuntimeContext,
@@ -2008,6 +2056,25 @@ fn spawn_unix_listener_acceptor(
     Ok(receiver)
 }
 
+#[cfg(windows)]
+#[allow(clippy::too_many_arguments)]
+fn spawn_unix_listener_acceptor(
+    _runtime: agentos_runtime::RuntimeContext,
+    _listener: UnixListener,
+    _guest_path: String,
+    _local_abstract_path_hex: Option<String>,
+    _unix_bound_addresses: GuestUnixAddressRegistry,
+    _target_binding_id: String,
+    _event_pusher: Arc<SocketReadinessSubscribers>,
+    _close_notify: Arc<tokio::sync::Notify>,
+    _close_complete: tokio::sync::oneshot::Sender<()>,
+    _accept_capacity: usize,
+    _capabilities: CapabilityRegistry,
+    _limits: ReactorIoLimits,
+) -> Result<AsyncCompletionReceiver<JavascriptUnixListenerEvent>, SidecarError> {
+    Err(abstract_unix_unsupported())
+}
+
 struct UnixListenerTaskCompletion(Option<tokio::sync::oneshot::Sender<()>>);
 
 impl Drop for UnixListenerTaskCompletion {
@@ -2085,6 +2152,7 @@ pub(in crate::execution) fn push_socket_event(
     clippy::too_many_arguments,
     reason = "the reader task receives explicit shared lifecycle flags owned by its socket"
 )]
+#[cfg(unix)]
 fn spawn_unix_socket_reader(
     runtime: agentos_runtime::RuntimeContext,
     stream: UnixStream,
@@ -2257,4 +2325,24 @@ fn spawn_unix_socket_reader(
         })
         .map_err(|error| SidecarError::Execution(error.to_string()))?;
     Ok(())
+}
+
+#[cfg(windows)]
+#[allow(clippy::too_many_arguments)]
+fn spawn_unix_socket_reader(
+    _runtime: agentos_runtime::RuntimeContext,
+    _stream: UnixStream,
+    _sender: AsyncCompletionSender<JavascriptTcpSocketEvent>,
+    _event_pusher: Arc<SocketReadinessSubscribers>,
+    _application_read_interest: Arc<AtomicBool>,
+    _application_read_notify: Arc<tokio::sync::Notify>,
+    _saw_local_shutdown: Arc<AtomicBool>,
+    _saw_remote_end: Arc<AtomicBool>,
+    _close_notified: Arc<AtomicBool>,
+    _resources: Arc<ResourceLedger>,
+    _limits: ReactorIoLimits,
+    _fairness_identity: Arc<OnceLock<(u64, u64)>>,
+    _fairness_identity_committed: Arc<tokio::sync::Notify>,
+) -> Result<(), SidecarError> {
+    Err(abstract_unix_unsupported())
 }

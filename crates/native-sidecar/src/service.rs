@@ -79,7 +79,6 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
@@ -2860,14 +2859,12 @@ where
             let host_path =
                 shadow_host_path_for_process(&shadow_root, &process.guest_cwd, guest_path);
             if host_path.exists() {
-                fs::set_permissions(&host_path, fs::Permissions::from_mode(mode)).map_err(
-                    |error| {
-                        SidecarError::Io(format!(
-                            "failed to mirror chmod to shadow path {}: {error}",
-                            host_path.display()
-                        ))
-                    },
-                )?;
+                crate::platform_fs::set_mode(&host_path, mode).map_err(|error| {
+                    SidecarError::Io(format!(
+                        "failed to mirror chmod to shadow path {}: {error}",
+                        host_path.display()
+                    ))
+                })?;
             }
         }
 

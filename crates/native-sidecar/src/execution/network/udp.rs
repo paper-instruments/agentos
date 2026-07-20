@@ -252,9 +252,18 @@ fn ipv4_interface(interface: Option<&str>) -> Result<Ipv4Addr, std::io::Error> {
         .map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))
 }
 
+#[cfg(unix)]
 fn interface_name_to_index(interface: &str) -> Result<u32, std::io::Error> {
     nix::net::if_::if_nametoindex(interface)
         .map_err(|error| std::io::Error::from_raw_os_error(error as i32))
+}
+
+#[cfg(windows)]
+fn interface_name_to_index(_interface: &str) -> Result<u32, std::io::Error> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "named multicast interfaces are unsupported on Windows",
+    ))
 }
 
 fn ipv6_interface_index(interface: Option<&str>) -> Result<u32, std::io::Error> {
@@ -265,18 +274,29 @@ fn ipv6_interface_index(interface: Option<&str>) -> Result<u32, std::io::Error> 
         return Ok(0);
     }
     if let Ok(address) = interface.parse::<Ipv6Addr>() {
-        let interface_name = nix::ifaddrs::getifaddrs()
-            .map_err(|error| std::io::Error::from_raw_os_error(error as i32))?
-            .find_map(|interface| {
-                interface
-                    .address
-                    .as_ref()
-                    .and_then(|address| address.as_sockaddr_in6())
-                    .filter(|socket_address| socket_address.ip() == address)
-                    .map(|_| interface.interface_name)
-            })
-            .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EADDRNOTAVAIL))?;
-        return interface_name_to_index(interface_name.as_str());
+        #[cfg(unix)]
+        {
+            let interface_name = nix::ifaddrs::getifaddrs()
+                .map_err(|error| std::io::Error::from_raw_os_error(error as i32))?
+                .find_map(|interface| {
+                    interface
+                        .address
+                        .as_ref()
+                        .and_then(|address| address.as_sockaddr_in6())
+                        .filter(|socket_address| socket_address.ip() == address)
+                        .map(|_| interface.interface_name)
+                })
+                .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EADDRNOTAVAIL))?;
+            return interface_name_to_index(interface_name.as_str());
+        }
+        #[cfg(windows)]
+        {
+            let _ = address;
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "IPv6 multicast address-to-interface lookup is unsupported on Windows",
+            ));
+        }
     }
     let scope = interface
         .rsplit_once('%')

@@ -1123,13 +1123,26 @@ fn sync_host_directory_tree_to_kernel_inner(
                     host_path.display()
                 ))
             })?;
+            #[cfg(unix)]
             let timestamp_key = (metadata.dev(), metadata.ino());
+            #[cfg(windows)]
+            let timestamp_key = (0, synced_file_times.len() as u64);
             let (atime_ms, mtime_ms) =
                 *synced_file_times.entry(timestamp_key).or_insert_with(|| {
-                    (
-                        metadata_time_ms(metadata.atime(), metadata.atime_nsec()),
-                        metadata_time_ms(metadata.mtime(), metadata.mtime_nsec()),
-                    )
+                    #[cfg(unix)]
+                    {
+                        (
+                            metadata_time_ms(metadata.atime(), metadata.atime_nsec()),
+                            metadata_time_ms(metadata.mtime(), metadata.mtime_nsec()),
+                        )
+                    }
+                    #[cfg(windows)]
+                    {
+                        (
+                            system_time_ms(metadata.accessed().ok()),
+                            system_time_ms(metadata.modified().ok()),
+                        )
+                    }
                 });
             let desired_mode = host_shadow_mode(&metadata);
             // Fast path: skip the expensive re-read + re-write when the kernel already
@@ -1307,7 +1320,7 @@ fn replace_kernel_symlink(
 }
 
 fn host_shadow_mode(metadata: &fs::Metadata) -> u32 {
-    metadata.permissions().mode() & 0o7777
+    crate::platform_fs::metadata_mode(metadata) & 0o7777
 }
 
 /// Reads a shadow-root file back into the kernel even when guest-visible mode
@@ -1319,9 +1332,9 @@ fn read_host_shadow_file(host_path: &Path, mode: u32) -> std::io::Result<Vec<u8>
     match fs::read(host_path) {
         Ok(bytes) => Ok(bytes),
         Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-            fs::set_permissions(host_path, fs::Permissions::from_mode(mode | 0o400))?;
+            crate::platform_fs::set_mode(host_path, mode | 0o400)?;
             let result = fs::read(host_path);
-            fs::set_permissions(host_path, fs::Permissions::from_mode(mode))?;
+            crate::platform_fs::set_mode(host_path, mode)?;
             result
         }
         Err(error) => Err(error),
@@ -1334,6 +1347,14 @@ fn metadata_time_ms(seconds: i64, nanos: i64) -> u64 {
     seconds
         .saturating_mul(1_000)
         .saturating_add(nanos / 1_000_000)
+}
+
+#[cfg(windows)]
+fn system_time_ms(value: Option<SystemTime>) -> u64 {
+    value
+        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
 }
 
 fn is_shadow_bootstrap_dir(path: &str) -> bool {
@@ -3642,7 +3663,7 @@ fn materialize_host_path_to_shadow(
         let _ = fs::remove_dir_all(&shadow_path);
         let target = fs::read_link(host_path)
             .map_err(|error| SidecarError::Io(format!("failed to read host symlink: {error}")))?;
-        std::os::unix::fs::symlink(&target, &shadow_path)
+        crate::platform_fs::create_symlink(&target, &shadow_path)
             .map_err(|error| SidecarError::Io(format!("failed to mirror host symlink: {error}")))?;
         return Ok(());
     }
@@ -3651,9 +3672,9 @@ fn materialize_host_path_to_shadow(
         fs::create_dir_all(&shadow_path).map_err(|error| {
             SidecarError::Io(format!("failed to create shadow directory: {error}"))
         })?;
-        fs::set_permissions(
+        crate::platform_fs::set_mode(
             &shadow_path,
-            fs::Permissions::from_mode(metadata.permissions().mode() & 0o7777),
+            crate::platform_fs::metadata_mode(&metadata) & 0o7777,
         )
         .map_err(|error| {
             SidecarError::Io(format!(
@@ -3676,9 +3697,9 @@ fn materialize_host_path_to_shadow(
             "failed to mirror host file into shadow root: {error}"
         ))
     })?;
-    fs::set_permissions(
+    crate::platform_fs::set_mode(
         &shadow_path,
-        fs::Permissions::from_mode(metadata.permissions().mode() & 0o7777),
+        crate::platform_fs::metadata_mode(&metadata) & 0o7777,
     )
     .map_err(|error| {
         SidecarError::Io(format!(
@@ -3705,7 +3726,7 @@ fn materialize_guest_path_to_shadow(
         let _ = fs::remove_file(&shadow_path);
         let _ = fs::remove_dir_all(&shadow_path);
         let target = vm.kernel.read_link(guest_path).map_err(kernel_error)?;
-        std::os::unix::fs::symlink(&target, &shadow_path)
+        crate::platform_fs::create_symlink(&target, &shadow_path)
             .map_err(|error| SidecarError::Io(format!("failed to mirror symlink: {error}")))?;
         return Ok(());
     }
@@ -3714,14 +3735,12 @@ fn materialize_guest_path_to_shadow(
         fs::create_dir_all(&shadow_path).map_err(|error| {
             SidecarError::Io(format!("failed to create shadow directory: {error}"))
         })?;
-        fs::set_permissions(&shadow_path, fs::Permissions::from_mode(stat.mode & 0o7777)).map_err(
-            |error| {
-                SidecarError::Io(format!(
-                    "failed to set shadow directory mode on {}: {error}",
-                    shadow_path.display()
-                ))
-            },
-        )?;
+        crate::platform_fs::set_mode(&shadow_path, stat.mode & 0o7777).map_err(|error| {
+            SidecarError::Io(format!(
+                "failed to set shadow directory mode on {}: {error}",
+                shadow_path.display()
+            ))
+        })?;
         return Ok(());
     }
 
@@ -3736,14 +3755,12 @@ fn materialize_guest_path_to_shadow(
             "failed to mirror guest file into shadow root: {error}"
         ))
     })?;
-    fs::set_permissions(&shadow_path, fs::Permissions::from_mode(stat.mode & 0o7777)).map_err(
-        |error| {
-            SidecarError::Io(format!(
-                "failed to set shadow file mode on {}: {error}",
-                shadow_path.display()
-            ))
-        },
-    )?;
+    crate::platform_fs::set_mode(&shadow_path, stat.mode & 0o7777).map_err(|error| {
+        SidecarError::Io(format!(
+            "failed to set shadow file mode on {}: {error}",
+            shadow_path.display()
+        ))
+    })?;
     Ok(())
 }
 

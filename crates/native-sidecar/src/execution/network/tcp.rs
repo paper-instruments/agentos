@@ -1811,13 +1811,17 @@ impl ActiveTcpListener {
                     if wait.is_zero() || Instant::now() >= deadline {
                         return Ok(None);
                     }
-                    if !wait_fd_readable_until(
+                    #[cfg(unix)]
+                    let ready = wait_fd_readable_until(
                         self.listener
                             .as_ref()
                             .expect("TCP listener checked before accept")
                             .as_fd(),
                         deadline,
-                    ) {
+                    );
+                    #[cfg(windows)]
+                    let ready = wait_socket_until(deadline);
+                    if !ready {
                         return Ok(None);
                     }
                 }
@@ -2291,6 +2295,7 @@ pub(in crate::execution) fn reserve_plain_socket_command(
 
 pub(in crate::execution) enum PlainSocketWriteStream {
     Tcp(tokio::net::TcpStream),
+    #[cfg(unix)]
     Unix(tokio::net::UnixStream),
 }
 
@@ -2298,6 +2303,7 @@ impl PlainSocketWriteStream {
     pub(in crate::execution) async fn writable(&self) -> std::io::Result<()> {
         match self {
             Self::Tcp(stream) => stream.writable().await,
+            #[cfg(unix)]
             Self::Unix(stream) => stream.writable().await,
         }
     }
@@ -2305,6 +2311,7 @@ impl PlainSocketWriteStream {
     fn try_write(&self, bytes: &[u8]) -> std::io::Result<usize> {
         match self {
             Self::Tcp(stream) => stream.try_write(bytes),
+            #[cfg(unix)]
             Self::Unix(stream) => stream.try_write(bytes),
         }
     }
@@ -2312,6 +2319,7 @@ impl PlainSocketWriteStream {
     fn try_shutdown_write(&self) -> std::io::Result<()> {
         match self {
             Self::Tcp(stream) => SockRef::from(stream).shutdown(Shutdown::Write),
+            #[cfg(unix)]
             Self::Unix(stream) => SockRef::from(stream).shutdown(Shutdown::Write),
         }
     }

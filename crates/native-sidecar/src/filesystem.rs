@@ -21,10 +21,20 @@ use crate::state::{
 };
 use crate::{DispatchResult, NativeSidecar, NativeSidecarBridge, SidecarError};
 
+#[cfg(windows)]
+use crate::posix as libc;
 use base64::Engine;
+#[cfg(unix)]
 use nix::errno::Errno;
+#[cfg(unix)]
 use nix::fcntl::OFlag;
+#[cfg(unix)]
 use nix::libc;
+#[cfg(windows)]
+#[path = "filesystem_windows.rs"]
+mod windows_mapped_host;
+#[cfg(windows)]
+use windows_mapped_host::*;
 
 // The universal resolver (`crate::plugins::host_dir::confine`) never returns a metadata-only `O_PATH`
 // handle (macOS has no `O_PATH`); a read-only open stands in as the anchor and
@@ -50,7 +60,9 @@ use agentos_kernel::vfs::{
 use agentos_native_sidecar_core::{
     decode_guest_filesystem_content, handle_guest_filesystem_call as core_guest_filesystem_call,
 };
+#[cfg(unix)]
 use nix::sys::stat::{utimensat, Mode, UtimensatFlags};
+#[cfg(unix)]
 use nix::sys::time::TimeSpec;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
@@ -60,8 +72,10 @@ use std::ffi::OsString;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
+#[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd};
-use std::os::unix::fs::{symlink, FileExt, MetadataExt, PermissionsExt};
+#[cfg(unix)]
+use std::os::unix::fs::{FileExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -148,11 +162,13 @@ enum MappedRuntimeHostAccess {
 /// `*at` calls, `fstat`, fd `read`/`write`) — never a recovered path string — so
 /// they stay confined to the resolved object and TOCTOU-safe. The `OwnedFd`
 /// closes the descriptor on drop.
+#[cfg(unix)]
 #[derive(Debug)]
 struct AnchoredFd {
     fd: OwnedFd,
 }
 
+#[cfg(unix)]
 impl AnchoredFd {
     /// `fstat` the resolved object.
     fn metadata(&self) -> std::io::Result<HostStat> {
@@ -210,6 +226,7 @@ impl AnchoredFd {
     }
 }
 
+#[cfg(unix)]
 impl AsRawFd for AnchoredFd {
     fn as_raw_fd(&self) -> RawFd {
         self.fd.as_raw_fd()
@@ -217,6 +234,7 @@ impl AsRawFd for AnchoredFd {
 }
 
 /// Read an entire file from `fd` into a `Vec`, using fd `read` (no path re-open).
+#[cfg(unix)]
 fn read_all_from_fd(fd: BorrowedFd<'_>) -> std::io::Result<Vec<u8>> {
     let mut out = Vec::new();
     let mut buf = [0_u8; 65536];
@@ -231,6 +249,7 @@ fn read_all_from_fd(fd: BorrowedFd<'_>) -> std::io::Result<Vec<u8>> {
 }
 
 /// Write all of `data` to `fd`, using fd `write` (no path re-open).
+#[cfg(unix)]
 fn write_all_to_fd(fd: BorrowedFd<'_>, mut data: &[u8]) -> std::io::Result<()> {
     while !data.is_empty() {
         let written = nix::unistd::write(fd, data).map_err(errno_to_io)?;
@@ -245,12 +264,14 @@ fn write_all_to_fd(fd: BorrowedFd<'_>, mut data: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 #[derive(Debug)]
 struct MappedRuntimeOpenedPath {
     handle: AnchoredFd,
     host_path: PathBuf,
 }
 
+#[cfg(unix)]
 #[derive(Debug)]
 struct MappedRuntimeParentPath {
     directory: AnchoredFd,
@@ -367,15 +388,35 @@ fn metadata_timespec(
     metadata: &fs::Metadata,
     access_time: bool,
 ) -> Result<VirtualTimeSpec, SidecarError> {
+    #[cfg(unix)]
     let (sec, nsec) = if access_time {
         (metadata.atime(), metadata.atime_nsec())
     } else {
         (metadata.mtime(), metadata.mtime_nsec())
     };
+    #[cfg(windows)]
+    let (sec, nsec) = {
+        let value = if access_time {
+            metadata.accessed()
+        } else {
+            metadata.modified()
+        }
+        .map_err(|error| SidecarError::Io(format!("failed to read host metadata time: {error}")))?;
+        let duration = value
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| {
+                SidecarError::InvalidState(format!("invalid host metadata time: {error}"))
+            })?;
+        (
+            i64::try_from(duration.as_secs()).unwrap_or(i64::MAX),
+            i64::from(duration.subsec_nanos()),
+        )
+    };
     VirtualTimeSpec::new(sec, nsec.clamp(0, 999_999_999) as u32)
         .map_err(|error| SidecarError::InvalidState(format!("invalid host metadata time: {error}")))
 }
 
+#[cfg(unix)]
 fn resolve_host_utime(spec: VirtualUtimeSpec, existing: VirtualTimeSpec) -> TimeSpec {
     match spec {
         VirtualUtimeSpec::Set(spec) => TimeSpec::new(spec.sec, spec.nsec as libc::c_long),
@@ -384,6 +425,7 @@ fn resolve_host_utime(spec: VirtualUtimeSpec, existing: VirtualTimeSpec) -> Time
     }
 }
 
+#[cfg(unix)]
 fn apply_host_path_utimens(
     host_path: &Path,
     atime: VirtualUtimeSpec,
@@ -429,6 +471,47 @@ fn apply_host_path_utimens(
         UtimensatFlags::NoFollowSymlink
     };
     utimensat(None, host_path, &times[0], &times[1], flags).map_err(|error| {
+        SidecarError::Io(format!(
+            "{context}: failed to update {}: {error}",
+            host_path.display()
+        ))
+    })
+}
+
+#[cfg(windows)]
+fn apply_host_path_utimens(
+    host_path: &Path,
+    atime: VirtualUtimeSpec,
+    mtime: VirtualUtimeSpec,
+    follow_symlinks: bool,
+    context: &str,
+) -> Result<(), SidecarError> {
+    let metadata = if follow_symlinks {
+        fs::metadata(host_path)
+    } else {
+        fs::symlink_metadata(host_path)
+    }
+    .map_err(|error| {
+        SidecarError::Io(format!(
+            "{context}: failed to stat {}: {error}",
+            host_path.display()
+        ))
+    })?;
+    let existing_atime = metadata_timespec(&metadata, true)?;
+    let existing_mtime = metadata_timespec(&metadata, false)?;
+    let resolve = |spec: VirtualUtimeSpec, existing: VirtualTimeSpec| match spec {
+        VirtualUtimeSpec::Set(value) => filetime::FileTime::from_unix_time(value.sec, value.nsec),
+        VirtualUtimeSpec::Now => filetime::FileTime::now(),
+        VirtualUtimeSpec::Omit => filetime::FileTime::from_unix_time(existing.sec, existing.nsec),
+    };
+    let atime = resolve(atime, existing_atime);
+    let mtime = resolve(mtime, existing_mtime);
+    let result = if follow_symlinks {
+        filetime::set_file_times(host_path, atime, mtime)
+    } else {
+        filetime::set_symlink_file_times(host_path, atime, mtime)
+    };
+    result.map_err(|error| {
         SidecarError::Io(format!(
             "{context}: failed to update {}: {error}",
             host_path.display()
@@ -3031,14 +3114,12 @@ fn mirror_process_mode_to_shadow(
     };
     match fs::symlink_metadata(&shadow_path) {
         Ok(metadata) if !metadata.file_type().is_symlink() => {
-            fs::set_permissions(&shadow_path, fs::Permissions::from_mode(mode & 0o7777)).map_err(
-                |error| {
-                    SidecarError::Io(format!(
-                        "failed to mirror ACL mode for {} into process shadow: {error}",
-                        normalize_path(guest_path)
-                    ))
-                },
-            )
+            crate::platform_fs::set_mode(&shadow_path, mode & 0o7777).map_err(|error| {
+                SidecarError::Io(format!(
+                    "failed to mirror ACL mode for {} into process shadow: {error}",
+                    normalize_path(guest_path)
+                ))
+            })
         }
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -3123,38 +3204,89 @@ fn javascript_sync_rpc_stat_value(stat: VirtualStat) -> Value {
 }
 
 fn javascript_sync_rpc_host_stat_value(metadata: &fs::Metadata) -> Value {
-    let mut value = Map::with_capacity(15);
-    value.insert("mode".to_string(), Value::from(metadata.mode()));
-    value.insert("size".to_string(), Value::from(metadata.size()));
-    value.insert("blocks".to_string(), Value::from(metadata.blocks()));
-    value.insert("dev".to_string(), Value::from(metadata.dev()));
-    value.insert("rdev".to_string(), Value::from(metadata.rdev()));
-    value.insert("isDirectory".to_string(), Value::from(metadata.is_dir()));
-    value.insert(
-        "isSymbolicLink".to_string(),
-        Value::from(metadata.file_type().is_symlink()),
-    );
-    value.insert(
-        "atimeMs".to_string(),
-        Value::from(metadata.atime() * 1000 + (metadata.atime_nsec() / 1_000_000)),
-    );
-    value.insert(
-        "mtimeMs".to_string(),
-        Value::from(metadata.mtime() * 1000 + (metadata.mtime_nsec() / 1_000_000)),
-    );
-    value.insert(
-        "ctimeMs".to_string(),
-        Value::from(metadata.ctime() * 1000 + (metadata.ctime_nsec() / 1_000_000)),
-    );
-    value.insert(
-        "birthtimeMs".to_string(),
-        Value::from(metadata.ctime() * 1000 + (metadata.ctime_nsec() / 1_000_000)),
-    );
-    value.insert("ino".to_string(), Value::from(metadata.ino()));
-    value.insert("nlink".to_string(), Value::from(metadata.nlink()));
-    value.insert("uid".to_string(), Value::from(metadata.uid()));
-    value.insert("gid".to_string(), Value::from(metadata.gid()));
-    Value::Object(value)
+    #[cfg(windows)]
+    {
+        let to_ms = |value: std::io::Result<std::time::SystemTime>| {
+            value
+                .ok()
+                .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
+                .unwrap_or(0)
+        };
+        let mut value = Map::with_capacity(15);
+        value.insert(
+            "mode".to_string(),
+            Value::from(crate::platform_fs::metadata_mode(metadata)),
+        );
+        value.insert("size".to_string(), Value::from(metadata.len()));
+        value.insert(
+            "blocks".to_string(),
+            Value::from(metadata.len().div_ceil(512)),
+        );
+        value.insert("dev".to_string(), Value::from(0));
+        value.insert("rdev".to_string(), Value::from(0));
+        value.insert("isDirectory".to_string(), Value::from(metadata.is_dir()));
+        value.insert(
+            "isSymbolicLink".to_string(),
+            Value::from(metadata.file_type().is_symlink()),
+        );
+        value.insert(
+            "atimeMs".to_string(),
+            Value::from(to_ms(metadata.accessed())),
+        );
+        value.insert(
+            "mtimeMs".to_string(),
+            Value::from(to_ms(metadata.modified())),
+        );
+        value.insert(
+            "ctimeMs".to_string(),
+            Value::from(to_ms(metadata.modified())),
+        );
+        value.insert(
+            "birthtimeMs".to_string(),
+            Value::from(to_ms(metadata.created())),
+        );
+        value.insert("ino".to_string(), Value::from(0));
+        value.insert("nlink".to_string(), Value::from(1));
+        value.insert("uid".to_string(), Value::from(0));
+        value.insert("gid".to_string(), Value::from(0));
+        return Value::Object(value);
+    }
+    #[cfg(unix)]
+    {
+        let mut value = Map::with_capacity(15);
+        value.insert("mode".to_string(), Value::from(metadata.mode()));
+        value.insert("size".to_string(), Value::from(metadata.size()));
+        value.insert("blocks".to_string(), Value::from(metadata.blocks()));
+        value.insert("dev".to_string(), Value::from(metadata.dev()));
+        value.insert("rdev".to_string(), Value::from(metadata.rdev()));
+        value.insert("isDirectory".to_string(), Value::from(metadata.is_dir()));
+        value.insert(
+            "isSymbolicLink".to_string(),
+            Value::from(metadata.file_type().is_symlink()),
+        );
+        value.insert(
+            "atimeMs".to_string(),
+            Value::from(metadata.atime() * 1000 + (metadata.atime_nsec() / 1_000_000)),
+        );
+        value.insert(
+            "mtimeMs".to_string(),
+            Value::from(metadata.mtime() * 1000 + (metadata.mtime_nsec() / 1_000_000)),
+        );
+        value.insert(
+            "ctimeMs".to_string(),
+            Value::from(metadata.ctime() * 1000 + (metadata.ctime_nsec() / 1_000_000)),
+        );
+        value.insert(
+            "birthtimeMs".to_string(),
+            Value::from(metadata.ctime() * 1000 + (metadata.ctime_nsec() / 1_000_000)),
+        );
+        value.insert("ino".to_string(), Value::from(metadata.ino()));
+        value.insert("nlink".to_string(), Value::from(metadata.nlink()));
+        value.insert("uid".to_string(), Value::from(metadata.uid()));
+        value.insert("gid".to_string(), Value::from(metadata.gid()));
+        Value::Object(value)
+    }
 }
 
 fn mapped_runtime_host_path(
@@ -3163,137 +3295,147 @@ fn mapped_runtime_host_path(
     guest_path: &str,
     writable: bool,
 ) -> Option<MappedRuntimeHostAccess> {
-    if process_prefers_kernel_fs_sync_rpc(process) {
+    #[cfg(windows)]
+    {
+        let _ = (kernel, process, guest_path, writable);
         return None;
     }
+    #[cfg(unix)]
+    {
+        if process_prefers_kernel_fs_sync_rpc(process) {
+            return None;
+        }
 
-    let normalized = if guest_path.starts_with('/') {
-        normalize_path(guest_path)
-    } else {
-        normalize_path(&format!(
-            "{}/{}",
-            process.guest_cwd.trim_end_matches('/'),
-            guest_path
-        ))
-    };
-    let mappings = process
-        .env
-        .get("AGENTOS_GUEST_PATH_MAPPINGS")
-        .and_then(|value| serde_json::from_str::<Vec<RuntimeGuestPathMappingWire>>(value).ok())?;
-    let mut sorted_mappings = mappings
-        .into_iter()
-        .filter_map(|mapping| {
-            (!mapping.guest_path.is_empty() && !mapping.host_path.is_empty()).then_some((
-                normalize_path(&mapping.guest_path),
-                PathBuf::from(mapping.host_path),
+        let normalized = if guest_path.starts_with('/') {
+            normalize_path(guest_path)
+        } else {
+            normalize_path(&format!(
+                "{}/{}",
+                process.guest_cwd.trim_end_matches('/'),
+                guest_path
             ))
-        })
-        .collect::<Vec<_>>();
-    sorted_mappings.sort_by_key(|mapping| std::cmp::Reverse(mapping.0.len()));
-    let readable_roots = runtime_host_access_roots(process, "AGENTOS_EXTRA_FS_READ_PATHS")?;
-    let writable_roots = writable
-        .then(|| runtime_host_access_roots(process, "AGENTOS_EXTRA_FS_WRITE_PATHS"))
-        .flatten()
-        .unwrap_or_default();
-
-    for (guest_root, host_root) in sorted_mappings {
-        if guest_root != "/"
-            && normalized != guest_root
-            && !normalized.starts_with(&format!("{guest_root}/"))
-        {
-            continue;
-        }
-        if guest_root == "/" && !normalized.starts_with('/') {
-            continue;
-        }
-        if guest_root == "/"
-            && kernel.mounted_filesystems().iter().any(|mount| {
-                mount.path != "/"
-                    && (normalized == mount.path
-                        || normalized.starts_with(&format!("{}/", mount.path)))
+        };
+        let mappings = process
+            .env
+            .get("AGENTOS_GUEST_PATH_MAPPINGS")
+            .and_then(|value| {
+                serde_json::from_str::<Vec<RuntimeGuestPathMappingWire>>(value).ok()
+            })?;
+        let mut sorted_mappings = mappings
+            .into_iter()
+            .filter_map(|mapping| {
+                (!mapping.guest_path.is_empty() && !mapping.host_path.is_empty()).then_some((
+                    normalize_path(&mapping.guest_path),
+                    PathBuf::from(mapping.host_path),
+                ))
             })
-        {
-            // The root mapping is only a process-shadow fallback. A non-root
-            // kernel mount is authoritative unless a more-specific host mapping
-            // matched earlier in this loop.
-            continue;
+            .collect::<Vec<_>>();
+        sorted_mappings.sort_by_key(|mapping| std::cmp::Reverse(mapping.0.len()));
+        let readable_roots = runtime_host_access_roots(process, "AGENTOS_EXTRA_FS_READ_PATHS")?;
+        let writable_roots = writable
+            .then(|| runtime_host_access_roots(process, "AGENTOS_EXTRA_FS_WRITE_PATHS"))
+            .flatten()
+            .unwrap_or_default();
+
+        for (guest_root, host_root) in sorted_mappings {
+            if guest_root != "/"
+                && normalized != guest_root
+                && !normalized.starts_with(&format!("{guest_root}/"))
+            {
+                continue;
+            }
+            if guest_root == "/" && !normalized.starts_with('/') {
+                continue;
+            }
+            if guest_root == "/"
+                && kernel.mounted_filesystems().iter().any(|mount| {
+                    mount.path != "/"
+                        && (normalized == mount.path
+                            || normalized.starts_with(&format!("{}/", mount.path)))
+                })
+            {
+                // The root mapping is only a process-shadow fallback. A non-root
+                // kernel mount is authoritative unless a more-specific host mapping
+                // matched earlier in this loop.
+                continue;
+            }
+
+            let normalized_host_root = if host_root.is_absolute() {
+                normalize_host_path(&host_root)
+            } else {
+                normalize_host_path(&std::env::current_dir().ok()?.join(host_root))
+            };
+            let suffix = if guest_root == "/" {
+                normalized.trim_start_matches('/')
+            } else {
+                normalized
+                    .strip_prefix(&guest_root)
+                    .unwrap_or_default()
+                    .trim_start_matches('/')
+            };
+            let host_path = if suffix.is_empty() {
+                normalized_host_root.clone()
+            } else {
+                normalized_host_root.join(suffix)
+            };
+
+            let is_asset_path = guest_root == PYTHON_PYODIDE_GUEST_ROOT
+                || normalized == PYTHON_PYODIDE_GUEST_ROOT
+                || normalized.starts_with(&format!("{PYTHON_PYODIDE_GUEST_ROOT}/"));
+            let is_cache_path = guest_root == PYTHON_PYODIDE_CACHE_GUEST_ROOT
+                || normalized == PYTHON_PYODIDE_CACHE_GUEST_ROOT
+                || normalized.starts_with(&format!("{PYTHON_PYODIDE_CACHE_GUEST_ROOT}/"));
+            if is_asset_path && !writable {
+                return Some(MappedRuntimeHostAccess::Writable(MappedRuntimeHostPath {
+                    guest_path: normalized.clone(),
+                    host_root: normalized_host_root.clone(),
+                    host_path,
+                }));
+            }
+            if is_cache_path {
+                return Some(MappedRuntimeHostAccess::Writable(MappedRuntimeHostPath {
+                    guest_path: normalized.clone(),
+                    host_root: normalized_host_root.clone(),
+                    host_path,
+                }));
+            }
+
+            let Some(read_root) = readable_roots
+                .iter()
+                .find(|root| path_is_within_root(&host_path, root))
+                .cloned()
+            else {
+                continue;
+            };
+            if !writable {
+                return Some(MappedRuntimeHostAccess::Writable(MappedRuntimeHostPath {
+                    guest_path: normalized.clone(),
+                    host_root: read_root.clone(),
+                    host_path,
+                }));
+            }
+            if let Some(write_root) = writable_roots
+                .iter()
+                .find(|root| path_is_within_root(&host_path, root))
+                .cloned()
+            {
+                return Some(MappedRuntimeHostAccess::Writable(MappedRuntimeHostPath {
+                    guest_path: normalized.clone(),
+                    host_root: write_root.clone(),
+                    host_path,
+                }));
+            }
+            if guest_root != "/" {
+                return Some(MappedRuntimeHostAccess::ReadOnly(MappedRuntimeHostPath {
+                    guest_path: normalized.clone(),
+                    host_root: read_root.clone(),
+                    host_path,
+                }));
+            }
         }
 
-        let normalized_host_root = if host_root.is_absolute() {
-            normalize_host_path(&host_root)
-        } else {
-            normalize_host_path(&std::env::current_dir().ok()?.join(host_root))
-        };
-        let suffix = if guest_root == "/" {
-            normalized.trim_start_matches('/')
-        } else {
-            normalized
-                .strip_prefix(&guest_root)
-                .unwrap_or_default()
-                .trim_start_matches('/')
-        };
-        let host_path = if suffix.is_empty() {
-            normalized_host_root.clone()
-        } else {
-            normalized_host_root.join(suffix)
-        };
-
-        let is_asset_path = guest_root == PYTHON_PYODIDE_GUEST_ROOT
-            || normalized == PYTHON_PYODIDE_GUEST_ROOT
-            || normalized.starts_with(&format!("{PYTHON_PYODIDE_GUEST_ROOT}/"));
-        let is_cache_path = guest_root == PYTHON_PYODIDE_CACHE_GUEST_ROOT
-            || normalized == PYTHON_PYODIDE_CACHE_GUEST_ROOT
-            || normalized.starts_with(&format!("{PYTHON_PYODIDE_CACHE_GUEST_ROOT}/"));
-        if is_asset_path && !writable {
-            return Some(MappedRuntimeHostAccess::Writable(MappedRuntimeHostPath {
-                guest_path: normalized.clone(),
-                host_root: normalized_host_root.clone(),
-                host_path,
-            }));
-        }
-        if is_cache_path {
-            return Some(MappedRuntimeHostAccess::Writable(MappedRuntimeHostPath {
-                guest_path: normalized.clone(),
-                host_root: normalized_host_root.clone(),
-                host_path,
-            }));
-        }
-
-        let Some(read_root) = readable_roots
-            .iter()
-            .find(|root| path_is_within_root(&host_path, root))
-            .cloned()
-        else {
-            continue;
-        };
-        if !writable {
-            return Some(MappedRuntimeHostAccess::Writable(MappedRuntimeHostPath {
-                guest_path: normalized.clone(),
-                host_root: read_root.clone(),
-                host_path,
-            }));
-        }
-        if let Some(write_root) = writable_roots
-            .iter()
-            .find(|root| path_is_within_root(&host_path, root))
-            .cloned()
-        {
-            return Some(MappedRuntimeHostAccess::Writable(MappedRuntimeHostPath {
-                guest_path: normalized.clone(),
-                host_root: write_root.clone(),
-                host_path,
-            }));
-        }
-        if guest_root != "/" {
-            return Some(MappedRuntimeHostAccess::ReadOnly(MappedRuntimeHostPath {
-                guest_path: normalized.clone(),
-                host_root: read_root.clone(),
-                host_path,
-            }));
-        }
+        None
     }
-
-    None
 }
 
 fn mapped_runtime_host_path_for_read(
@@ -3435,6 +3577,7 @@ fn read_only_mapped_runtime_host_path_error(guest_path: &str) -> SidecarError {
 /// fd and the resolved (diagnostic-only) host path via the universal
 /// resolve-beneath walk in [`crate::plugins::host_dir::confine`]. See that
 /// module for why `openat2` is not used.
+#[cfg(unix)]
 fn mapped_runtime_open_fd(
     host_root: &Path,
     relative: &Path,
@@ -3503,6 +3646,7 @@ fn mapped_runtime_resolved_guest_path(
     )))
 }
 
+#[cfg(unix)]
 fn open_mapped_runtime_beneath(
     mapped: &MappedRuntimeHostPath,
     operation: &str,
@@ -3523,6 +3667,7 @@ fn open_mapped_runtime_beneath(
     })
 }
 
+#[cfg(unix)]
 fn open_mapped_runtime_directory_beneath(
     mapped: &MappedRuntimeHostPath,
     operation: &str,
@@ -3541,6 +3686,7 @@ fn open_mapped_runtime_directory_beneath(
     })
 }
 
+#[cfg(unix)]
 fn open_mapped_runtime_parent_beneath(
     mapped: &MappedRuntimeHostPath,
     operation: &str,
@@ -3613,6 +3759,7 @@ impl HostStat {
     }
 }
 
+#[cfg(unix)]
 impl From<&fs::Metadata> for HostStat {
     fn from(metadata: &fs::Metadata) -> Self {
         Self {
@@ -3634,6 +3781,7 @@ impl From<&fs::Metadata> for HostStat {
     }
 }
 
+#[cfg(unix)]
 impl HostStat {
     // `FileStat` field widths differ by platform (e.g. `st_dev`/`st_nlink` are
     // narrower on macOS than on Linux), so these casts are load-bearing on macOS
@@ -3661,6 +3809,7 @@ impl HostStat {
     }
 }
 
+#[cfg(unix)]
 fn mapped_child_lstat(parent: &MappedRuntimeParentPath) -> std::io::Result<HostStat> {
     let stat = nix::sys::stat::fstatat(
         Some(parent.directory.as_raw_fd()),
@@ -3671,6 +3820,7 @@ fn mapped_child_lstat(parent: &MappedRuntimeParentPath) -> std::io::Result<HostS
     Ok(HostStat::from_filestat(&stat))
 }
 
+#[cfg(unix)]
 fn mapped_runtime_symlink_metadata(
     mapped: &MappedRuntimeHostPath,
     operation: &str,
@@ -3699,6 +3849,7 @@ fn mapped_runtime_symlink_metadata(
     })
 }
 
+#[cfg(unix)]
 fn read_mapped_runtime_link(
     mapped: &MappedRuntimeHostPath,
     guest_path: &str,
@@ -3734,19 +3885,23 @@ fn read_mapped_runtime_link(
 // Linux `/proc/self/fd`-append variant).
 // ---------------------------------------------------------------------------
 
+#[cfg(unix)]
 fn errno_to_io(error: Errno) -> std::io::Error {
     std::io::Error::from_raw_os_error(error as i32)
 }
 
+#[cfg(unix)]
 fn create_dir_at(dir: &AnchoredFd, name: &std::ffi::OsStr) -> std::io::Result<()> {
     nix::sys::stat::mkdirat(Some(dir.as_raw_fd()), name, Mode::from_bits_truncate(0o777))
         .map_err(errno_to_io)
 }
 
+#[cfg(unix)]
 fn mapped_child_create_dir(parent: &MappedRuntimeParentPath) -> std::io::Result<()> {
     create_dir_at(&parent.directory, parent.child_name.as_os_str())
 }
 
+#[cfg(unix)]
 fn mapped_child_is_dir(parent: &MappedRuntimeParentPath) -> std::io::Result<bool> {
     use nix::sys::stat::SFlag;
     let stat = nix::sys::stat::fstatat(
@@ -3758,6 +3913,7 @@ fn mapped_child_is_dir(parent: &MappedRuntimeParentPath) -> std::io::Result<bool
     Ok(stat.st_mode & SFlag::S_IFMT.bits() == SFlag::S_IFDIR.bits())
 }
 
+#[cfg(unix)]
 fn mapped_child_remove_dir(parent: &MappedRuntimeParentPath) -> std::io::Result<()> {
     nix::unistd::unlinkat(
         Some(parent.directory.as_raw_fd()),
@@ -3767,6 +3923,7 @@ fn mapped_child_remove_dir(parent: &MappedRuntimeParentPath) -> std::io::Result<
     .map_err(errno_to_io)
 }
 
+#[cfg(unix)]
 fn mapped_child_remove_file(parent: &MappedRuntimeParentPath) -> std::io::Result<()> {
     nix::unistd::unlinkat(
         Some(parent.directory.as_raw_fd()),
@@ -3776,6 +3933,7 @@ fn mapped_child_remove_file(parent: &MappedRuntimeParentPath) -> std::io::Result
     .map_err(errno_to_io)
 }
 
+#[cfg(unix)]
 fn mapped_child_symlink(parent: &MappedRuntimeParentPath, target: &str) -> std::io::Result<()> {
     nix::unistd::symlinkat(
         target,
@@ -3785,6 +3943,7 @@ fn mapped_child_symlink(parent: &MappedRuntimeParentPath, target: &str) -> std::
     .map_err(errno_to_io)
 }
 
+#[cfg(unix)]
 fn mapped_child_read_link(parent: &MappedRuntimeParentPath) -> std::io::Result<PathBuf> {
     nix::fcntl::readlinkat(
         Some(parent.directory.as_raw_fd()),
@@ -3797,6 +3956,7 @@ fn mapped_child_read_link(parent: &MappedRuntimeParentPath) -> std::io::Result<P
 /// Set access/modification times on a mapped child without following symlinks
 /// (lutimes), using an fd-relative `utimensat` anchored on the resolved parent
 /// fd.
+#[cfg(unix)]
 fn apply_mapped_child_utimens(
     parent: &MappedRuntimeParentPath,
     atime: VirtualUtimeSpec,
@@ -3850,6 +4010,7 @@ fn apply_mapped_child_utimens(
 /// handle via fd-relative `futimens`. Used for the follow-symlink `utimes` path;
 /// `Omit` reads the existing time from the same fd (`fstat`), preserving
 /// nanosecond precision.
+#[cfg(unix)]
 fn apply_anchored_fd_utimens(
     handle: &AnchoredFd,
     atime: VirtualUtimeSpec,
@@ -3890,6 +4051,7 @@ fn apply_anchored_fd_utimens(
         .map_err(|error| SidecarError::Io(format!("{context}: failed to set times: {error}")))
 }
 
+#[cfg(unix)]
 fn mapped_child_rename(
     source: &MappedRuntimeParentPath,
     destination: &MappedRuntimeParentPath,
@@ -3916,6 +4078,7 @@ fn mapped_child_rename(
     }
 }
 
+#[cfg(unix)]
 fn mapped_child_rename_at2(
     source: &MappedRuntimeParentPath,
     destination: &MappedRuntimeParentPath,
@@ -3949,6 +4112,7 @@ fn mapped_child_rename_at2(
     }
 }
 
+#[cfg(unix)]
 fn create_mapped_runtime_directory(
     parent: &MappedRuntimeParentPath,
     guest_path: &str,
@@ -3979,6 +4143,7 @@ fn create_mapped_runtime_directory(
     }
 }
 
+#[cfg(unix)]
 fn create_mapped_runtime_root_directory(
     mapped: &MappedRuntimeHostPath,
     recursive: bool,
@@ -4012,6 +4177,7 @@ fn create_mapped_runtime_root_directory(
     }
 }
 
+#[cfg(unix)]
 fn ensure_mapped_runtime_parent_dirs(
     mapped: &MappedRuntimeHostPath,
     operation: &str,
@@ -4059,6 +4225,7 @@ fn ensure_mapped_runtime_parent_dirs(
     Ok(())
 }
 
+#[cfg(unix)]
 fn mapped_runtime_open_error(
     operation: &str,
     mapped: &MappedRuntimeHostPath,
@@ -4096,6 +4263,7 @@ fn mapped_host_open_is_writable(flags: u32) -> bool {
         || flags & libc::O_TRUNC as u32 != 0
 }
 
+#[cfg(unix)]
 fn mapped_runtime_exists_error(mapped: &MappedRuntimeHostPath, error: Errno) -> SidecarError {
     if error == Errno::EXDEV {
         return mapped_runtime_host_path_escape_error(mapped, &mapped.host_path);
@@ -4116,6 +4284,7 @@ fn mapped_runtime_exists_error(mapped: &MappedRuntimeHostPath, error: Errno) -> 
 /// an ancestor for a symlink, leaking an out-of-root existence bit. A missing
 /// leaf OR a missing/non-directory ancestor yields `Ok(false)`; an escape yields
 /// a typed error.
+#[cfg(unix)]
 fn mapped_runtime_host_path_exists(mapped: &MappedRuntimeHostPath) -> Result<bool, SidecarError> {
     use crate::plugins::host_dir::confine;
 
@@ -4238,6 +4407,7 @@ fn materialize_mapped_host_path_from_kernel(
 /// mode and creation flags, so the owned fd is turned directly into a
 /// [`std::fs::File`] — no path re-open, so there is no TOCTOU window and no
 /// `/proc/self/fd` dependency.
+#[cfg(unix)]
 fn open_mapped_host_fd(
     kernel: &SidecarKernel,
     process: &mut ActiveProcess,
@@ -4265,6 +4435,7 @@ fn open_mapped_host_fd(
     Ok(json!(fd))
 }
 
+#[cfg(unix)]
 fn read_mapped_host_fd(
     mapped: &mut crate::state::ActiveMappedHostFd,
     fd: u32,
@@ -4286,6 +4457,7 @@ fn read_mapped_host_fd(
     Ok(javascript_sync_rpc_bytes_value(&bytes))
 }
 
+#[cfg(unix)]
 fn write_mapped_host_fd(
     mapped: &mut crate::state::ActiveMappedHostFd,
     fd: u32,
@@ -4305,6 +4477,7 @@ fn write_mapped_host_fd(
     Ok(json!(written))
 }
 
+#[cfg(unix)]
 fn write_all_mapped_host_fd(
     mapped: &mut crate::state::ActiveMappedHostFd,
     fd: u32,
@@ -4472,6 +4645,7 @@ fn rename_mapped_host_path_at2(
 /// fds (and `O_NOFOLLOW` on every `openat`) keeps the move strictly confined:
 /// a leaf swapped to a symlink fails closed (`ELOOP`) rather than being followed,
 /// except a genuine symlink leaf, which is recreated verbatim (never dereferenced).
+#[cfg(unix)]
 fn move_across_devices_at(
     src_dir: BorrowedFd<'_>,
     src_name: &std::ffi::OsStr,
@@ -4487,8 +4661,10 @@ fn move_across_devices_at(
 /// thread stack — a SIGSEGV that aborts every co-tenant VM — or exhaust file
 /// descriptors (two held per level). Bounded by default per the runtime's
 /// resource-safety invariant; deeper trees fail with the typed error below.
+#[cfg(unix)]
 const MAX_CROSS_DEVICE_MOVE_DEPTH: u32 = 256;
 
+#[cfg(unix)]
 fn move_across_devices_at_depth(
     src_dir: BorrowedFd<'_>,
     src_name: &std::ffi::OsStr,
@@ -4611,6 +4787,7 @@ fn move_across_devices_at_depth(
 /// `openat` a single child of `dir` with `O_NOFOLLOW` (fails closed with `ELOOP`
 /// if the child is a symlink), returning an owned fd. `directory` opens it
 /// `O_DIRECTORY | O_RDONLY`; otherwise `O_RDONLY`.
+#[cfg(unix)]
 fn open_child_beneath(
     dir: BorrowedFd<'_>,
     name: &std::ffi::OsStr,
@@ -4627,6 +4804,7 @@ fn open_child_beneath(
 
 /// Copy all bytes from `src` to `dst`, streaming through a fixed buffer (no whole
 /// -file allocation), using fd `read`/`write`.
+#[cfg(unix)]
 fn copy_fd_to_fd(src: BorrowedFd<'_>, dst: BorrowedFd<'_>) -> std::io::Result<()> {
     let mut buf = [0_u8; 65536];
     loop {
@@ -4642,6 +4820,7 @@ fn copy_fd_to_fd(src: BorrowedFd<'_>, dst: BorrowedFd<'_>) -> std::io::Result<()
 /// Remove an existing destination entry (fd-relative, nofollow): a file or
 /// symlink is unlinked, a directory is `rmdir`ed (fails if non-empty, matching
 /// rename-replace semantics), a missing entry is a no-op.
+#[cfg(unix)]
 fn remove_dest_at(dst_dir: BorrowedFd<'_>, name: &std::ffi::OsStr) -> std::io::Result<()> {
     use nix::sys::stat::SFlag;
     match nix::sys::stat::fstatat(
@@ -4662,6 +4841,7 @@ fn remove_dest_at(dst_dir: BorrowedFd<'_>, name: &std::ffi::OsStr) -> std::io::R
     }
 }
 
+#[cfg(unix)]
 fn mapped_readdir_entry_is_directory(
     mapped_host: &MappedRuntimeHostPath,
     directory: &MappedRuntimeOpenedPath,
@@ -4703,6 +4883,7 @@ pub(crate) fn service_javascript_fs_readdir_entries(
     kernel_pid: u32,
     path: &str,
 ) -> Result<BTreeMap<String, bool>, SidecarError> {
+    #[cfg(unix)]
     if let Some(MappedRuntimeHostAccess::Writable(mapped_host)) =
         mapped_runtime_host_path(kernel, process, path, false)
     {
@@ -4874,14 +5055,12 @@ fn mirror_guest_file_write_to_shadow(
     })?;
 
     let stat = vm.kernel.lstat(&guest_path).map_err(kernel_error)?;
-    fs::set_permissions(&shadow_path, fs::Permissions::from_mode(stat.mode & 0o7777)).map_err(
-        |error| {
-            SidecarError::Io(format!(
-                "failed to set shadow mode for {}: {error}",
-                guest_path
-            ))
-        },
-    )?;
+    crate::platform_fs::set_mode(&shadow_path, stat.mode & 0o7777).map_err(|error| {
+        SidecarError::Io(format!(
+            "failed to set shadow mode for {}: {error}",
+            guest_path
+        ))
+    })?;
 
     Ok(())
 }
@@ -4901,14 +5080,12 @@ fn mirror_guest_directory_write_to_shadow(
     })?;
 
     let stat = vm.kernel.lstat(&guest_path).map_err(kernel_error)?;
-    fs::set_permissions(&shadow_path, fs::Permissions::from_mode(stat.mode & 0o7777)).map_err(
-        |error| {
-            SidecarError::Io(format!(
-                "failed to set shadow mode for directory {}: {error}",
-                guest_path
-            ))
-        },
-    )?;
+    crate::platform_fs::set_mode(&shadow_path, stat.mode & 0o7777).map_err(|error| {
+        SidecarError::Io(format!(
+            "failed to set shadow mode for directory {}: {error}",
+            guest_path
+        ))
+    })?;
 
     Ok(())
 }
@@ -4974,7 +5151,7 @@ fn mirror_guest_symlink_to_shadow(
     }
 
     remove_shadow_path_if_exists(&shadow_path, &guest_path)?;
-    symlink(&shadow_target, &shadow_path).map_err(|error| {
+    crate::platform_fs::create_symlink(&shadow_target, &shadow_path).map_err(|error| {
         SidecarError::Io(format!(
             "failed to mirror guest symlink {} into shadow root: {error}",
             guest_path
@@ -5016,7 +5193,7 @@ fn mirror_guest_chmod_to_shadow(
     mode: u32,
 ) -> Result<(), SidecarError> {
     let shadow_path = ensure_guest_path_materialized_in_shadow(vm, guest_path)?;
-    fs::set_permissions(&shadow_path, fs::Permissions::from_mode(mode & 0o7777)).map_err(|error| {
+    crate::platform_fs::set_mode(&shadow_path, mode & 0o7777).map_err(|error| {
         SidecarError::Io(format!(
             "failed to set shadow mode for {}: {error}",
             normalize_path(guest_path)
@@ -5405,7 +5582,10 @@ fn sync_host_directory_to_kernel(
 ) -> Result<(), SidecarError> {
     vm.kernel.mkdir(guest_path, true).map_err(kernel_error)?;
     vm.kernel
-        .chmod(guest_path, metadata.permissions().mode() & 0o7777)
+        .chmod(
+            guest_path,
+            crate::platform_fs::metadata_mode(metadata) & 0o7777,
+        )
         .map_err(kernel_error)?;
     Ok(())
 }
@@ -5427,7 +5607,10 @@ fn sync_host_file_to_kernel(
         .write_file(guest_path, bytes)
         .map_err(kernel_error)?;
     vm.kernel
-        .chmod(guest_path, metadata.permissions().mode() & 0o7777)
+        .chmod(
+            guest_path,
+            crate::platform_fs::metadata_mode(metadata) & 0o7777,
+        )
         .map_err(kernel_error)?;
     Ok(())
 }

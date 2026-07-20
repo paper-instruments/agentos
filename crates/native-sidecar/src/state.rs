@@ -36,6 +36,7 @@ use std::error::Error;
 use std::fmt;
 use std::fs::File;
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
+#[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
@@ -44,6 +45,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{Receiver as TokioReceiver, Sender as TokioSender};
 use tokio::sync::oneshot::Sender as SyncSender;
 use tokio::sync::Notify;
+#[cfg(windows)]
+use uds_windows::{UnixListener, UnixStream};
 
 const DEFAULT_MAX_SOCKET_READINESS_SUBSCRIBERS: usize = 16_384;
 

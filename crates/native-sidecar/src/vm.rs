@@ -66,7 +66,6 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::fs;
 use std::net::{IpAddr, SocketAddr};
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -129,20 +128,8 @@ fn create_vm_unix_socket_host_dir() -> Result<PathBuf, SidecarError> {
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>();
         let path = std::env::temp_dir().join(format!("agentos-uds-{suffix}"));
-        let mut builder = fs::DirBuilder::new();
-        builder.mode(0o700);
-        match builder.create(&path) {
+        match crate::platform_fs::create_private_dir(&path) {
             Ok(()) => {
-                if let Err(error) = fs::set_permissions(&path, fs::Permissions::from_mode(0o700)) {
-                    let cleanup_error = fs::remove_dir(&path).err();
-                    return Err(SidecarError::Io(format!(
-                        "failed to set private Unix socket namespace {} to mode 0700: {error}{}",
-                        path.display(),
-                        cleanup_error
-                            .map(|cleanup| format!("; cleanup failed: {cleanup}"))
-                            .unwrap_or_default()
-                    )));
-                }
                 return Ok(path);
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -2592,7 +2579,7 @@ fn bootstrap_shadow_root(root: &Path) -> Result<(), SidecarError> {
                 host_path.display()
             ))
         })?;
-        fs::set_permissions(&host_path, fs::Permissions::from_mode(*mode)).map_err(|error| {
+        crate::platform_fs::set_mode(&host_path, *mode).map_err(|error| {
             SidecarError::Io(format!(
                 "failed to set shadow directory mode {mode:o} on {}: {error}",
                 host_path.display()
@@ -2632,14 +2619,12 @@ fn seed_ca_certificates_bundle(root: &Path) -> Result<(), SidecarError> {
                     bundle_path.display()
                 ))
             })?;
-            fs::set_permissions(&bundle_path, fs::Permissions::from_mode(0o644)).map_err(
-                |error| {
-                    SidecarError::Io(format!(
-                        "failed to set CA bundle mode on {}: {error}",
-                        bundle_path.display()
-                    ))
-                },
-            )?;
+            crate::platform_fs::set_mode(&bundle_path, 0o644).map_err(|error| {
+                SidecarError::Io(format!(
+                    "failed to set CA bundle mode on {}: {error}",
+                    bundle_path.display()
+                ))
+            })?;
         }
         Err(error) => {
             return Err(SidecarError::Io(format!(
@@ -2653,14 +2638,13 @@ fn seed_ca_certificates_bundle(root: &Path) -> Result<(), SidecarError> {
     match fs::symlink_metadata(&symlink_path) {
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            std::os::unix::fs::symlink(CA_CERTIFICATES_SYMLINK_TARGET, &symlink_path).map_err(
-                |error| {
+            crate::platform_fs::create_symlink(CA_CERTIFICATES_SYMLINK_TARGET, &symlink_path)
+                .map_err(|error| {
                     SidecarError::Io(format!(
                         "failed to seed CA bundle symlink {}: {error}",
                         symlink_path.display()
                     ))
-                },
-            )?;
+                })?;
         }
         Err(error) => {
             return Err(SidecarError::Io(format!(
@@ -2872,7 +2856,7 @@ fn materialize_shadow_entries(
                 })?;
             }
             crate::protocol::RootFilesystemEntryKind::Symlink => {
-                std::os::unix::fs::symlink(
+                crate::platform_fs::create_symlink(
                     entry.target.as_deref().ok_or_else(|| {
                         SidecarError::InvalidState(format!(
                             "root filesystem symlink {} requires a target",
@@ -2902,14 +2886,12 @@ fn materialize_shadow_entries(
             }
             crate::protocol::RootFilesystemEntryKind::Symlink => 0o777,
         });
-        fs::set_permissions(&shadow_path, fs::Permissions::from_mode(mode & 0o7777)).map_err(
-            |error| {
-                SidecarError::Io(format!(
-                    "failed to set shadow mode on {}: {error}",
-                    entry.path
-                ))
-            },
-        )?;
+        crate::platform_fs::set_mode(&shadow_path, mode & 0o7777).map_err(|error| {
+            SidecarError::Io(format!(
+                "failed to set shadow mode on {}: {error}",
+                entry.path
+            ))
+        })?;
     }
 
     Ok(())

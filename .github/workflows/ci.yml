@@ -29,6 +29,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-sidecar-${{ hashFiles('Cargo.lock') }}
       - run: pnpm install --frozen-lockfile
       - run: cargo check -p agentos-sidecar
 

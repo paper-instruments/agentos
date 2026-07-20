@@ -143,6 +143,8 @@ use crate::state::{
 use crate::wire::{ProtocolFrame as WireProtocolFrame, WireFrameCodec};
 use crate::{DispatchResult, NativeSidecar, NativeSidecarBridge, SidecarError};
 
+#[cfg(windows)]
+use crate::posix as libc;
 use base64::Engine;
 use bytes::Bytes;
 use h2::{client, server, Reason};
@@ -150,17 +152,23 @@ use hickory_resolver::proto::rr::{RData, Record, RecordType};
 use hmac::{Hmac, Mac};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, Request, Response, Uri};
 use md5::Md5;
+#[cfg(unix)]
 use nix::libc;
+#[cfg(unix)]
 use nix::poll::{poll, PollFd as NixPollFd, PollFlags, PollTimeout};
+#[cfg(unix)]
 use nix::sys::signal::{kill as send_signal, Signal};
 #[cfg(target_os = "linux")]
 use nix::sys::socket::connect as connect_socket;
+#[cfg(unix)]
 use nix::sys::socket::{bind as bind_socket, UnixAddr};
+#[cfg(unix)]
 use nix::sys::wait::WaitStatus;
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 use nix::sys::wait::{waitid as wait_on_child, Id as WaitId, WaitPidFlag};
 #[cfg(target_os = "macos")]
 use nix::sys::wait::{waitpid, WaitPidFlag};
+#[cfg(unix)]
 use nix::unistd::Pid;
 use openssl::bn::{BigNum, BigNumContext};
 use openssl::derive::Deriver;
@@ -254,21 +262,26 @@ use std::net::{
     IpAddr, Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs,
     UdpSocket,
 };
+#[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+#[cfg(unix)]
 use std::os::unix::net::{SocketAddr as UnixSocketAddr, UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::task::{Context, Poll, Wake, Waker};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::sync::mpsc::{
     channel as tokio_channel, error::TryRecvError as TokioTryRecvError, Receiver as TokioReceiver,
     Sender as TokioSender,
 };
 use tokio_rustls::{TlsAcceptor, TlsConnector};
+#[cfg(windows)]
+use uds_windows::{SocketAddr as UnixSocketAddr, UnixListener, UnixStream};
 use url::Url;
 
 const DEFAULT_KERNEL_STDIN_READ_MAX_BYTES: usize = 64 * 1024;

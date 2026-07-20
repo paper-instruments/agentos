@@ -2250,7 +2250,7 @@ fn mirror_process_chmod_to_host(
     if !host_path.exists() {
         return Ok(());
     }
-    fs::set_permissions(&host_path, fs::Permissions::from_mode(mode)).map_err(|error| {
+    crate::platform_fs::set_mode(&host_path, mode).map_err(|error| {
         SidecarError::Io(format!(
             "failed to mirror chmod to host path {}: {error}",
             host_path.display()

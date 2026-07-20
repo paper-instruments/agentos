@@ -32,7 +32,7 @@ use std::io::{self, Read, Write};
 #[cfg(unix)]
 use std::os::fd::OwnedFd;
 #[cfg(unix)]
-use std::os::unix::fs::{symlink as create_symlink, MetadataExt, PermissionsExt};
+use std::os::unix::fs::MetadataExt;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream as StdUnixStream;
 use std::path::{Path, PathBuf};
@@ -2672,7 +2672,7 @@ impl FilesystemBridge for LocalBridge {
             fs::create_dir_all(parent)
                 .map_err(|error| LocalBridgeError::io("mkdir", &request.link_path, error))?;
         }
-        create_symlink(&request.target_path, link_path)
+        crate::platform_fs::create_symlink(&request.target_path, link_path)
             .map_err(|error| LocalBridgeError::io("symlink", &request.link_path, error))
     }
 
@@ -2683,8 +2683,7 @@ impl FilesystemBridge for LocalBridge {
     }
 
     fn chmod(&mut self, request: ChmodRequest) -> Result<(), Self::Error> {
-        let permissions = fs::Permissions::from_mode(request.mode);
-        fs::set_permissions(Self::host_path(&request.path), permissions)
+        crate::platform_fs::set_mode(&Self::host_path(&request.path), request.mode)
             .map_err(|error| LocalBridgeError::io("chmod", &request.path, error))
     }
 
@@ -3196,8 +3195,8 @@ impl LocalBridge {
 
     fn file_metadata(metadata: fs::Metadata) -> FileMetadata {
         FileMetadata {
-            mode: metadata.permissions().mode(),
-            size: metadata.size(),
+            mode: crate::platform_fs::metadata_mode(&metadata),
+            size: metadata.len(),
             kind: Self::file_kind(metadata.file_type()),
         }
     }
