@@ -2,6 +2,8 @@ use super::*;
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
+#[cfg(windows)]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const DEFAULT_ALLOWED_NODE_BUILTINS: &[&str] = &[
     "assert",
