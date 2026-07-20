@@ -6,8 +6,8 @@ use crate::javascript::{
 };
 use crate::node_import_cache::{NodeImportCache, NODE_IMPORT_CACHE_ASSET_ROOT_ENV};
 use crate::runtime_support::{
-    env_flag_enabled, file_fingerprint, resolve_execution_path, warmup_marker_path,
-    NODE_DISABLE_COMPILE_CACHE_ENV, NODE_FROZEN_TIME_ENV,
+    env_flag_enabled, file_fingerprint, host_stat_value, resolve_execution_path,
+    warmup_marker_path, NODE_DISABLE_COMPILE_CACHE_ENV, NODE_FROZEN_TIME_ENV,
 };
 use crate::v8_runtime;
 use agentos_runtime::RuntimeContext;
@@ -18,7 +18,6 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
-use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -2654,23 +2653,7 @@ fn python_host_path_to_guest(pyodide_dist_path: &Path, host_path: &Path) -> Opti
 }
 
 fn python_host_stat_value(metadata: &fs::Metadata) -> Value {
-    json!({
-        "mode": metadata.mode(),
-        "size": metadata.size(),
-        "blocks": metadata.blocks(),
-        "dev": metadata.dev(),
-        "rdev": metadata.rdev(),
-        "isDirectory": metadata.is_dir(),
-        "isSymbolicLink": metadata.file_type().is_symlink(),
-        "atimeMs": metadata.atime() * 1000 + (metadata.atime_nsec() / 1_000_000),
-        "mtimeMs": metadata.mtime() * 1000 + (metadata.mtime_nsec() / 1_000_000),
-        "ctimeMs": metadata.ctime() * 1000 + (metadata.ctime_nsec() / 1_000_000),
-        "birthtimeMs": metadata.ctime() * 1000 + (metadata.ctime_nsec() / 1_000_000),
-        "ino": metadata.ino(),
-        "nlink": metadata.nlink(),
-        "uid": metadata.uid(),
-        "gid": metadata.gid(),
-    })
+    host_stat_value(metadata)
 }
 
 fn python_readdir_value(entries: Vec<String>) -> Value {

@@ -2892,7 +2892,7 @@ fn write_benchmark_workspace(
     let host_node_modules = repo_root.join("node_modules");
     let workspace_node_modules = root.join("node_modules");
     if host_node_modules.exists() && !workspace_node_modules.exists() {
-        std::os::unix::fs::symlink(&host_node_modules, &workspace_node_modules)?;
+        link_benchmark_node_modules(&host_node_modules, &workspace_node_modules)?;
     }
     fs::write(
         root.join("package.json"),
@@ -3029,6 +3029,16 @@ fn write_benchmark_workspace(
     )?;
 
     Ok(())
+}
+
+#[cfg(unix)]
+fn link_benchmark_node_modules(source: &Path, destination: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(source, destination)
+}
+
+#[cfg(windows)]
+fn link_benchmark_node_modules(source: &Path, destination: &Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_dir(source, destination)
 }
 
 fn local_import_entrypoint_source(final_value: usize) -> String {

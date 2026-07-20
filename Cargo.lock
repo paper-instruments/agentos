@@ -367,6 +367,7 @@ dependencies = [
  "signal-hook",
  "tokio",
  "v8",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

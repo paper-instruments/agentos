@@ -1,20 +1,29 @@
 //! V8 isolate runtime manager backed by the embedded V8 runtime.
 
+#[cfg(unix)]
 use crate::v8_ipc::{self, BinaryFrame};
+#[cfg(unix)]
 use agentos_runtime::RuntimeContext;
+#[cfg(unix)]
 use agentos_v8_runtime::embedded_runtime::{spawn_embedded_runtime_ipc, EmbeddedRuntimeHandle};
 use serde_json::Value;
-use std::io::{self, BufReader, Read, Write};
+use std::io;
+#[cfg(unix)]
+use std::io::{BufReader, Read, Write};
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
+#[cfg(unix)]
 use std::sync::{Arc, Mutex};
 
 /// Manages an embedded V8 runtime and its IPC connection.
+#[cfg(unix)]
 pub struct V8Runtime {
     runtime: EmbeddedRuntimeHandle,
     reader: BufReader<UnixStream>,
     writer: UnixStream,
 }
 
+#[cfg(unix)]
 impl V8Runtime {
     /// Spawn the embedded V8 runtime and connect over IPC.
     pub fn spawn(runtime_context: &RuntimeContext) -> io::Result<Self> {
@@ -143,6 +152,7 @@ impl V8Runtime {
     }
 }
 
+#[cfg(unix)]
 impl Drop for V8Runtime {
     fn drop(&mut self) {
         self.runtime.shutdown();
@@ -150,10 +160,12 @@ impl Drop for V8Runtime {
 }
 
 /// Thread-safe wrapper for V8Runtime that allows sending from multiple threads.
+#[cfg(unix)]
 pub struct SharedV8Runtime {
     inner: Arc<Mutex<V8Runtime>>,
 }
 
+#[cfg(unix)]
 impl SharedV8Runtime {
     pub fn new(runtime: V8Runtime) -> Self {
         Self {
@@ -166,6 +178,7 @@ impl SharedV8Runtime {
     }
 }
 
+#[cfg(unix)]
 impl Clone for SharedV8Runtime {
     fn clone(&self) -> Self {
         Self {

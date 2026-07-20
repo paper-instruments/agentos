@@ -7,7 +7,9 @@ use crate::javascript::{
     JavascriptExecutionLimits, JavascriptSyncRpcRequest, StartJavascriptExecutionRequest,
 };
 use crate::node_import_cache::NodeImportCache;
-use crate::runtime_support::{env_flag_enabled, file_fingerprint, warmup_marker_path};
+use crate::runtime_support::{
+    env_flag_enabled, file_fingerprint, host_stat_value, warmup_marker_path,
+};
 use crate::signal::{NodeSignalDispositionAction, NodeSignalHandlerRegistration};
 use crate::v8_host::{V8RuntimeHost, V8SessionHandle};
 use crate::v8_runtime;
@@ -22,7 +24,6 @@ use std::fmt;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
-use std::os::unix::fs::{FileExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -1637,11 +1638,8 @@ fn handle_internal_wasm_sync_rpc_request(
             .map(|()| true);
         }
         let mode = request.args.get(1).and_then(Value::as_u64).unwrap_or(0) as u32;
-        let result = (|| -> Result<(), std::io::Error> {
-            let mut permissions = fs::metadata(&host_path)?.permissions();
-            permissions.set_mode(mode);
-            fs::set_permissions(&host_path, permissions)
-        })();
+        let result =
+            (|| -> Result<(), std::io::Error> { set_host_permissions(&host_path, mode) })();
         return respond_wasm_sync_rpc_unit(execution, request, path, result).map(|()| true);
     }
 
@@ -1840,7 +1838,7 @@ fn handle_internal_wasm_sync_rpc_request(
             execution,
             request,
             link_path,
-            std::os::unix::fs::symlink(&target_path, &host_link_path),
+            create_host_symlink(&target_path, &host_link_path),
         )
         .map(|()| true);
     }
@@ -1912,8 +1910,7 @@ fn handle_internal_wasm_sync_rpc_request(
             return Ok(false);
         };
         let written = if let Some(position) = position {
-            file.write_at(&bytes, position)
-                .map_err(WasmExecutionError::Spawn)?
+            positioned_write(file, &bytes, position).map_err(WasmExecutionError::Spawn)?
         } else {
             file.write(&bytes).map_err(WasmExecutionError::Spawn)?
         };
@@ -1936,8 +1933,7 @@ fn handle_internal_wasm_sync_rpc_request(
         };
         let mut buffer = vec![0u8; length];
         let bytes_read = if let Some(position) = position {
-            file.read_at(&mut buffer, position)
-                .map_err(WasmExecutionError::Spawn)?
+            positioned_read(file, &mut buffer, position).map_err(WasmExecutionError::Spawn)?
         } else {
             file.read(&mut buffer).map_err(WasmExecutionError::Spawn)?
         };
@@ -2295,23 +2291,71 @@ fn wasm_sync_rpc_error_code(error: &std::io::Error) -> &'static str {
 }
 
 fn wasm_host_stat_value(metadata: &fs::Metadata) -> Value {
-    json!({
-        "mode": metadata.mode(),
-        "size": metadata.size(),
-        "blocks": metadata.blocks(),
-        "dev": metadata.dev(),
-        "rdev": metadata.rdev(),
-        "isDirectory": metadata.is_dir(),
-        "isSymbolicLink": metadata.file_type().is_symlink(),
-        "atimeMs": metadata.atime() * 1000 + (metadata.atime_nsec() / 1_000_000),
-        "mtimeMs": metadata.mtime() * 1000 + (metadata.mtime_nsec() / 1_000_000),
-        "ctimeMs": metadata.ctime() * 1000 + (metadata.ctime_nsec() / 1_000_000),
-        "birthtimeMs": metadata.ctime() * 1000 + (metadata.ctime_nsec() / 1_000_000),
-        "ino": metadata.ino(),
-        "nlink": metadata.nlink(),
-        "uid": metadata.uid(),
-        "gid": metadata.gid(),
-    })
+    host_stat_value(metadata)
+}
+
+#[cfg(unix)]
+fn set_host_permissions(path: &Path, mode: u32) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut permissions = fs::metadata(path)?.permissions();
+    permissions.set_mode(mode);
+    fs::set_permissions(path, permissions)
+}
+
+#[cfg(windows)]
+fn set_host_permissions(path: &Path, mode: u32) -> std::io::Result<()> {
+    let mut permissions = fs::metadata(path)?.permissions();
+    permissions.set_readonly(mode & 0o222 == 0);
+    fs::set_permissions(path, permissions)
+}
+
+#[cfg(unix)]
+fn create_host_symlink(target: &Path, link_path: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link_path)
+}
+
+#[cfg(windows)]
+fn create_host_symlink(target: &Path, link_path: &Path) -> std::io::Result<()> {
+    use std::os::windows::fs::{symlink_dir, symlink_file};
+
+    let target_for_metadata = if target.is_absolute() {
+        target.to_path_buf()
+    } else {
+        link_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(target)
+    };
+    if fs::metadata(target_for_metadata).is_ok_and(|metadata| metadata.is_dir()) {
+        symlink_dir(target, link_path)
+    } else {
+        symlink_file(target, link_path)
+    }
+}
+
+#[cfg(unix)]
+fn positioned_write(file: &fs::File, bytes: &[u8], position: u64) -> std::io::Result<usize> {
+    use std::os::unix::fs::FileExt;
+    file.write_at(bytes, position)
+}
+
+#[cfg(windows)]
+fn positioned_write(file: &fs::File, bytes: &[u8], position: u64) -> std::io::Result<usize> {
+    use std::os::windows::fs::FileExt;
+    file.seek_write(bytes, position)
+}
+
+#[cfg(unix)]
+fn positioned_read(file: &fs::File, bytes: &mut [u8], position: u64) -> std::io::Result<usize> {
+    use std::os::unix::fs::FileExt;
+    file.read_at(bytes, position)
+}
+
+#[cfg(windows)]
+fn positioned_read(file: &fs::File, bytes: &mut [u8], position: u64) -> std::io::Result<usize> {
+    use std::os::windows::fs::FileExt;
+    file.seek_read(bytes, position)
 }
 
 fn strip_guest_prefix(path: &str, prefix: &str) -> Option<String> {
@@ -4706,6 +4750,7 @@ mod tests {
     };
     use std::collections::{BTreeMap, BTreeSet, VecDeque};
     use std::fs;
+    #[cfg(unix)]
     use std::os::unix::fs::symlink;
     use std::path::{Path, PathBuf};
     use std::time::Duration;
@@ -5095,6 +5140,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn resolved_module_path_canonicalizes_path_like_specifiers() {
         let temp = tempdir().expect("create temp dir");
@@ -5418,6 +5464,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn translate_wasm_guest_path_rejects_symlink_escape_from_sandbox_root() {
         let temp = tempdir().expect("create temp dir");

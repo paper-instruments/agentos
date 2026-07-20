@@ -1,7 +1,12 @@
 use std::collections::HashMap;
+#[cfg(unix)]
 use std::collections::HashSet;
-use std::io::{self, Write};
+use std::io;
+#[cfg(unix)]
+use std::io::Write;
+#[cfg(unix)]
 use std::net::Shutdown;
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
@@ -9,6 +14,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::host_call::{record_sync_bridge_host_phase, BridgeCallRegistry, CallIdRouter};
+#[cfg(unix)]
 use crate::ipc_binary::BinaryFrame;
 #[cfg(test)]
 use crate::runtime_protocol::RuntimeEvent;
@@ -16,14 +22,17 @@ use crate::runtime_protocol::{
     validate_bridge_response_status, BridgeResponse, ModuleReaderHandle, RuntimeCommand,
     SessionMessage, StreamEvent,
 };
+#[cfg(any(unix, test))]
+use crate::session::RuntimeEventEnvelope;
 use crate::session::{
-    runtime_event_output_channel, RuntimeEventEnvelope, RuntimeEventOutputReceiver,
-    RuntimeEventOutputSender, SessionCommand, SessionManager,
+    runtime_event_output_channel, RuntimeEventOutputReceiver, RuntimeEventOutputSender,
+    SessionCommand, SessionManager,
 };
 use crate::snapshot::SnapshotCache;
 use crate::{bridge, isolate};
 use agentos_runtime::accounting::ResourceClass;
 
+#[cfg(unix)]
 static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
 #[cfg(test)]
 const TEST_SESSION_OUTPUT_CHANNEL_CAPACITY: usize = 1024;
@@ -631,6 +640,7 @@ pub fn shared_embedded_runtime(
     Ok(shared)
 }
 
+#[cfg(unix)]
 pub struct EmbeddedRuntimeHandle {
     alive: Arc<AtomicBool>,
     codec_released: AtomicBool,
@@ -638,6 +648,7 @@ pub struct EmbeddedRuntimeHandle {
     join_handle: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
+#[cfg(unix)]
 impl EmbeddedRuntimeHandle {
     pub fn is_alive(&self) -> bool {
         self.alive.load(Ordering::Acquire)
@@ -660,6 +671,7 @@ impl EmbeddedRuntimeHandle {
     }
 }
 
+#[cfg(unix)]
 impl Drop for EmbeddedRuntimeHandle {
     fn drop(&mut self) {
         let _ = self.shutdown_stream.shutdown(Shutdown::Both);
@@ -670,6 +682,7 @@ impl Drop for EmbeddedRuntimeHandle {
     }
 }
 
+#[cfg(unix)]
 pub fn spawn_embedded_runtime_ipc(
     max_concurrency: Option<usize>,
     runtime: agentos_runtime::RuntimeContext,
@@ -704,6 +717,7 @@ pub fn spawn_embedded_runtime_ipc(
     ))
 }
 
+#[cfg(unix)]
 fn run_embedded_runtime(
     stream: UnixStream,
     max_concurrency: usize,
@@ -759,6 +773,7 @@ fn run_embedded_runtime(
     let _ = writer_handle.join();
 }
 
+#[cfg(unix)]
 fn ipc_writer_thread(
     rx: crossbeam_channel::Receiver<RuntimeEventEnvelope>,
     mut writer: UnixStream,
@@ -779,6 +794,7 @@ fn ipc_writer_thread(
     }
 }
 
+#[cfg(unix)]
 fn handle_connection(
     mut stream: UnixStream,
     connection_id: u64,
