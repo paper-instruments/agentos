@@ -74,6 +74,8 @@ use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 #[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd};
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
