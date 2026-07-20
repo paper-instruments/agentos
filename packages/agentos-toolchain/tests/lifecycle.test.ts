@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import {
+	chmodSync,
 	existsSync,
 	lstatSync,
 	mkdirSync,
@@ -13,7 +14,9 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
+import { packAospkgFromTar } from "../src/aospkg.js";
 import { build } from "../src/build.js";
+import { decodeMountIndex } from "../src/generated-package-format.js";
 import { resolveTag } from "../src/publish.js";
 import { stage } from "../src/stage.js";
 
@@ -61,8 +64,12 @@ describe("stage", () => {
 			["bash", "cat", "df", "id", "linked-sh", "more", "sh"].sort(),
 		);
 		// Symlink sources are dereferenced into real files.
-		expect(lstatSync(join(pkg, "bin", "linked-sh")).isSymbolicLink()).toBe(false);
-		expect(readFileSync(join(pkg, "bin", "linked-sh"), "utf8")).toBe("\0asm-sh");
+		expect(lstatSync(join(pkg, "bin", "linked-sh")).isSymbolicLink()).toBe(
+			false,
+		);
+		expect(readFileSync(join(pkg, "bin", "linked-sh"), "utf8")).toBe(
+			"\0asm-sh",
+		);
 		expect(readFileSync(join(pkg, "bin", "bash"), "utf8")).toBe("\0asm-sh");
 		expect(readFileSync(join(pkg, "bin", "id"), "utf8")).toBe("\0asm-stubs");
 		for (const command of result.staged) {
@@ -145,9 +152,9 @@ describe("build", () => {
 		);
 		// Staging fields are build-time only — they must not ship at runtime.
 		expect(runtimeManifest).toEqual({ name: "fake", version: "1.2.3" });
-		expect(readFileSync(join(pkg, "dist", "package", "bin", "bash"), "utf8")).toBe(
-			"\0asm-sh",
-		);
+		expect(
+			readFileSync(join(pkg, "dist", "package", "bin", "bash"), "utf8"),
+		).toBe("\0asm-sh");
 		for (const command of result.commands) {
 			expect(
 				statSync(join(pkg, "dist", "package", "bin", command)).mode & 0o777,
@@ -161,6 +168,34 @@ describe("build", () => {
 		expect(result.commands).toEqual([]);
 		expect(existsSync(result.outTar)).toBe(true);
 		expect(existsSync(join(pkg, "dist", "package", "bin"))).toBe(false);
+	});
+
+	test("marks declared package commands executable in virtual metadata", () => {
+		const source = mkTmp("agentos-aospkg-source-");
+		mkdirSync(join(source, "bin"));
+		writeFileSync(
+			join(source, "agentos-package.json"),
+			JSON.stringify({ name: "virtual-mode", version: "1.0.0" }),
+		);
+		writeFileSync(join(source, "bin", "tool"), "\0asm-tool");
+		chmodSync(join(source, "bin", "tool"), 0o644);
+
+		const sourceTar = join(mkTmp("agentos-aospkg-tar-"), "package.tar");
+		execFileSync("tar", ["-cf", sourceTar, "-C", source, "."]);
+		const output = join(mkTmp("agentos-aospkg-output-"), "package.aospkg");
+		packAospkgFromTar(sourceTar, output);
+
+		const bytes = readFileSync(output);
+		const manifestLength = bytes.readUInt32LE(8);
+		const indexLength = bytes.readUInt32LE(12);
+		const indexStart = 16 + manifestLength;
+		const index = decodeMountIndex(
+			bytes.subarray(indexStart + 2, indexStart + indexLength),
+		);
+		const command = index.tarEntries.find(
+			(entry) => entry.path === "/bin/tool",
+		);
+		expect(command?.mode && command.mode & 0o777).toBe(0o755);
 	});
 });
 

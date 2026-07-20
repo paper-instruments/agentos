@@ -23,7 +23,7 @@ use agentos_kernel::vfs::{
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, File, FileExt, Metadata, OpenOptions};
 use serde::Deserialize;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -270,13 +270,20 @@ impl HostDirFilesystem {
             i64::try_from(mtime_ms / 1_000).unwrap_or(i64::MAX),
             ((mtime_ms % 1_000) * 1_000_000) as u32,
         );
-        let file = match self.root.open(&relative) {
-            Ok(file) => file.into_std(),
-            Err(_) => self
-                .root
+        let metadata = self
+            .root
+            .metadata(&relative)
+            .map_err(|error| io_error_to_vfs("utimes", path, error))?;
+        let file = if metadata.is_dir() {
+            self.root
                 .open_dir(&relative)
                 .map(Dir::into_std_file)
-                .map_err(|error| io_error_to_vfs("utimes", path, error))?,
+                .map_err(|error| io_error_to_vfs("utimes", path, error))?
+        } else {
+            // `SetFileTime` needs a handle with write-attributes access on
+            // Windows. `Dir::open` returns a read handle, which makes utimes
+            // fail with ERROR_ACCESS_DENIED even for a writable file.
+            self.open_write(path, false, false)?.into_std()
         };
         filetime::set_file_handle_times(&file, Some(atime), Some(mtime))
             .map_err(|error| io_error_to_vfs("utimes", path, error))
@@ -543,30 +550,18 @@ impl VirtualFileSystem for HostDirFilesystem {
         Ok(bytes)
     }
 
-    fn pwrite(
-        &mut self,
-        path: &str,
-        content: impl Into<Vec<u8>>,
-        mut offset: u64,
-    ) -> VfsResult<()> {
-        let file = self.open_write(path, false, false)?;
-        let content = content.into();
-        let mut written = 0;
-        while written < content.len() {
-            let count = file
-                .seek_write(&content[written..], offset)
-                .map_err(|error| io_error_to_vfs("pwrite", path, error))?;
-            if count == 0 {
-                return Err(io_error_to_vfs(
-                    "pwrite",
-                    path,
-                    io::Error::new(io::ErrorKind::WriteZero, "failed to write whole buffer"),
-                ));
-            }
-            written += count;
-            offset = offset.saturating_add(count as u64);
-        }
-        Ok(())
+    fn pwrite(&mut self, path: &str, content: impl Into<Vec<u8>>, offset: u64) -> VfsResult<()> {
+        // `std::os::windows::fs::FileExt::seek_write` uses an overlapped write,
+        // but cap-std opens these capability handles for synchronous I/O. That
+        // combination returns ERROR_ACCESS_DENIED. Kernel filesystem access is
+        // serialized here, so an ordinary seek + write preserves pwrite's
+        // guest-visible offset semantics without changing the descriptor's
+        // independently tracked cursor.
+        let mut file = self.open_write(path, false, false)?;
+        file.seek(SeekFrom::Start(offset))
+            .map_err(|error| io_error_to_vfs("pwrite", path, error))?;
+        file.write_all(&content.into())
+            .map_err(|error| io_error_to_vfs("pwrite", path, error))
     }
 }
 
