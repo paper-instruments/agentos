@@ -6890,8 +6890,6 @@ const hostProcessImport = {
               command,
               argv0,
               args,
-              exactExecPath: activeSpawnCallContext?.exactExecPath ?? false,
-              searchPath: activeSpawnCallContext?.searchPath ?? null,
               cwd: cwd ?? null,
               stdinFd: Number(stdinFd) >>> 0,
               stdoutFd: Number(stdoutFd) >>> 0,

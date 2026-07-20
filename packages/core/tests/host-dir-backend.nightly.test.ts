@@ -103,9 +103,6 @@ describe("host_dir native mount integration", () => {
 		});
 		const result = await vm.exec(
 			"printf written > /hostmnt/from-guest.txt && cat /hostmnt/from-guest.txt",
-			process.platform === "win32"
-				? { env: { AGENTOS_TRACE_HOST_PROCESS: "1" } }
-				: undefined,
 		);
 		expect(result.exitCode, result.stderr || result.stdout).toBe(0);
 		expect(result.stdout).toBe("written");

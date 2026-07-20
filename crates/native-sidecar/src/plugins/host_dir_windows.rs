@@ -432,7 +432,16 @@ impl VirtualFileSystem for HostDirFilesystem {
     }
 
     fn realpath(&self, path: &str) -> VfsResult<String> {
-        let (_, relative) = self.relative_path(path)?;
+        let (normalized, relative) = self.relative_path(path)?;
+        // cap-std's Windows canonicalizer reports the capability directory's
+        // host basename for `.`.  The mounted filesystem root is `/` in the
+        // guest namespace, so returning that basename would make the mount
+        // table append it to the guest mount path (for example,
+        // `/workspace/workspace`).  The root handle is already the canonical
+        // confinement boundary; no host lookup is needed for this case.
+        if normalized == "/" {
+            return Ok(normalized);
+        }
         let canonical = self
             .root
             .canonicalize(relative)

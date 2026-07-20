@@ -50,15 +50,9 @@ describe("command execution", () => {
 		await vm.mkdir("/tmp/testdir");
 		const result = await vm.exec(
 			"printf found > marker.txt && cat marker.txt",
-			{
-				cwd: "/tmp/testdir",
-				env:
-					process.platform === "win32"
-						? { AGENTOS_TRACE_HOST_PROCESS: "1" }
-						: undefined,
-			},
+			{ cwd: "/tmp/testdir" },
 		);
-		expect(result.exitCode, result.stderr || result.stdout).toBe(0);
+		expect(result.exitCode).toBe(0);
 		expect(result.stdout).toContain("found");
 	});
 
