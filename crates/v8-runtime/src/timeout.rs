@@ -45,10 +45,12 @@ const CPU_BUDGET_POLL_INTERVAL: Duration = Duration::from_millis(50);
 ///
 /// macOS has no `pthread_getcpuclockid`/per-thread POSIX clock, so it uses a
 /// separate Mach-based implementation below (`pthread_mach_thread_np` +
-/// `thread_info`) that exposes the same opaque `ThreadCpuClock` interface.
+/// `thread_info`). Windows duplicates the current thread pseudo-handle and
+/// samples it with `GetThreadTimes`. Both expose the same opaque
+/// `ThreadCpuClock` interface.
 #[cfg(all(unix, not(target_os = "macos")))]
 #[cfg_attr(test, allow(dead_code))]
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct ThreadCpuClock {
     clockid: libc::clockid_t,
 }
@@ -79,7 +81,7 @@ impl ThreadCpuClock {
     /// Read accumulated CPU time for the captured thread, in milliseconds.
     /// Returns `None` if the clock read fails.
     #[cfg_attr(test, allow(dead_code))]
-    fn elapsed_ms(self) -> Option<u64> {
+    fn elapsed_ms(&self) -> Option<u64> {
         // SAFETY: `clockid` came from a successful `pthread_getcpuclockid`; the
         // timespec is fully written by `clock_gettime` on success.
         unsafe {
@@ -94,6 +96,86 @@ impl ThreadCpuClock {
     }
 }
 
+/// Windows per-thread CPU clock. `GetCurrentThread` returns a pseudo-handle
+/// that is only meaningful to the calling thread, so capture duplicates it
+/// into a real process-owned handle before the watchdog reads it from another
+/// thread. `OwnedHandle` closes that duplicate when the session releases its
+/// final clone.
+#[cfg(windows)]
+#[cfg_attr(test, allow(dead_code))]
+#[derive(Clone)]
+pub(crate) struct ThreadCpuClock {
+    handle: Arc<std::os::windows::io::OwnedHandle>,
+}
+
+#[cfg(windows)]
+#[cfg_attr(test, allow(dead_code))]
+pub(crate) fn current_thread_cpu_clock() -> Option<ThreadCpuClock> {
+    use std::os::windows::io::FromRawHandle;
+    use windows_sys::Win32::Foundation::{DuplicateHandle, DUPLICATE_SAME_ACCESS, HANDLE};
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetCurrentThread};
+
+    let process = unsafe { GetCurrentProcess() };
+    let mut duplicated: HANDLE = std::ptr::null_mut();
+    // SAFETY: all source/target handles belong to this process. The output
+    // pointer is valid and becomes an owned, non-inheritable handle on success.
+    let result = unsafe {
+        DuplicateHandle(
+            process,
+            GetCurrentThread(),
+            process,
+            &mut duplicated,
+            0,
+            0,
+            DUPLICATE_SAME_ACCESS,
+        )
+    };
+    if result == 0 || duplicated.is_null() {
+        return None;
+    }
+    // SAFETY: `DuplicateHandle` returned a new owned handle that is closed only
+    // by this `OwnedHandle` (shared across clones through `Arc`).
+    let handle = unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(duplicated) };
+    Some(ThreadCpuClock {
+        handle: Arc::new(handle),
+    })
+}
+
+#[cfg(windows)]
+impl ThreadCpuClock {
+    /// Read accumulated kernel + user CPU time for the captured thread, in
+    /// milliseconds. Windows reports each FILETIME in 100-nanosecond ticks.
+    #[cfg_attr(test, allow(dead_code))]
+    fn elapsed_ms(&self) -> Option<u64> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Foundation::FILETIME;
+        use windows_sys::Win32::System::Threading::GetThreadTimes;
+
+        let mut creation = FILETIME::default();
+        let mut exit = FILETIME::default();
+        let mut kernel = FILETIME::default();
+        let mut user = FILETIME::default();
+        // SAFETY: the duplicated thread handle remains open through `self`, and
+        // each FILETIME out-pointer is valid for the duration of this call.
+        let result = unsafe {
+            GetThreadTimes(
+                self.handle.as_raw_handle(),
+                &mut creation,
+                &mut exit,
+                &mut kernel,
+                &mut user,
+            )
+        };
+        if result == 0 {
+            return None;
+        }
+        let ticks = |value: FILETIME| {
+            (u64::from(value.dwHighDateTime) << 32) | u64::from(value.dwLowDateTime)
+        };
+        Some(ticks(kernel).saturating_add(ticks(user)) / 10_000)
+    }
+}
+
 /// macOS per-thread CPU clock. There is no `pthread_getcpuclockid` on Apple
 /// platforms, so the thread's CPU time is read through the Mach
 /// `thread_info(THREAD_BASIC_INFO)` call. The Mach thread port obtained via
@@ -102,7 +184,7 @@ impl ThreadCpuClock {
 /// contract above.
 #[cfg(target_os = "macos")]
 #[cfg_attr(test, allow(dead_code))]
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct ThreadCpuClock {
     port: libc::mach_port_t,
 }
@@ -126,7 +208,7 @@ impl ThreadCpuClock {
     /// Read accumulated CPU time (user + system) for the captured thread, in
     /// milliseconds. Returns `None` if the Mach query fails.
     #[cfg_attr(test, allow(dead_code))]
-    fn elapsed_ms(self) -> Option<u64> {
+    fn elapsed_ms(&self) -> Option<u64> {
         // SAFETY: `thread_info` fully initialises `info` when it returns
         // KERN_SUCCESS; the count is the documented THREAD_BASIC_INFO length.
         unsafe {
@@ -166,7 +248,7 @@ pub(crate) struct CpuBudgetGuard {
     task: Option<tokio::task::JoinHandle<()>>,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl CpuBudgetGuard {
     /// Spawn the CPU-budget watchdog.
     ///
@@ -241,27 +323,27 @@ impl CpuBudgetGuard {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl Drop for CpuBudgetGuard {
     fn drop(&mut self) {
         self.cancel();
     }
 }
 
-// Non-unix fallback: there is no portable per-thread CPU clock, so the
+// Unsupported-platform fallback: there is no portable per-thread CPU clock, so the
 // CPU-budget watchdog cannot be enforced. `current_thread_cpu_clock` returns
 // `None`, which makes the session surface a clear "cannot enforce" error if a
 // CPU budget is requested, rather than silently running uncapped.
-#[cfg(not(unix))]
-#[derive(Clone, Copy)]
+#[cfg(not(any(unix, windows)))]
+#[derive(Clone)]
 pub(crate) struct ThreadCpuClock;
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub(crate) fn current_thread_cpu_clock() -> Option<ThreadCpuClock> {
     None
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 impl CpuBudgetGuard {
     pub(crate) fn new(
         _runtime: &RuntimeContext,

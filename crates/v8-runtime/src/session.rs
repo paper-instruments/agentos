@@ -2227,9 +2227,9 @@ fn session_thread(
     // thread; this is what lets the CPU-budget guard measure active JS CPU time
     // (excluding idle/await) without running on the execution thread itself.
     // Guest JS always runs on this thread, so this clock is the execution clock.
-    #[cfg(all(not(test), unix))]
+    #[cfg(all(not(test), any(unix, windows)))]
     let exec_thread_cpu_clock = crate::timeout::current_thread_cpu_clock();
-    #[cfg(all(not(test), not(unix)))]
+    #[cfg(all(not(test), not(any(unix, windows))))]
     let exec_thread_cpu_clock: Option<crate::timeout::ThreadCpuClock> = None;
 
     // Isolate creation is normally deferred to first Execute (when bridge code is
@@ -2647,7 +2647,7 @@ fn session_thread(
                                 // requested cap — surface that rather than silently
                                 // running uncapped.
                                 let cpu_clock = match exec_thread_cpu_clock {
-                                    Some(clock) => clock,
+                                    Some(ref clock) => clock.clone(),
                                     None => {
                                         let result_frame = RuntimeEvent::ExecutionResult {
                                             session_id,

@@ -30,6 +30,7 @@ describe("host_dir native mount integration", () => {
 
 	test("path traversal attempt (../../etc/passwd) is blocked", async () => {
 		vm = await AgentOs.create({
+			defaultSoftware: false,
 			mounts: [
 				{
 					path: "/hostmnt",
@@ -42,6 +43,7 @@ describe("host_dir native mount integration", () => {
 
 	test("mounted host directory exposes existing host files", async () => {
 		vm = await AgentOs.create({
+			defaultSoftware: false,
 			mounts: [
 				{
 					path: "/hostmnt",
@@ -119,6 +121,7 @@ describe("host_dir native mount integration", () => {
 		);
 
 		vm = await AgentOs.create({
+			defaultSoftware: false,
 			mounts: [
 				{
 					path: "/hostmnt",
@@ -135,6 +138,7 @@ describe("host_dir native mount integration", () => {
 		"Windows drive paths are not guest-visible host paths",
 		async () => {
 			vm = await AgentOs.create({
+				defaultSoftware: false,
 				mounts: [
 					{
 						path: "/hostmnt",
@@ -148,6 +152,7 @@ describe("host_dir native mount integration", () => {
 
 	test("write blocked when helper defaults to readOnly", async () => {
 		vm = await AgentOs.create({
+			defaultSoftware: false,
 			mounts: [
 				{
 					path: "/hostmnt",
@@ -162,6 +167,7 @@ describe("host_dir native mount integration", () => {
 
 	test("write works when readOnly: false", async () => {
 		vm = await AgentOs.create({
+			defaultSoftware: false,
 			mounts: [
 				{
 					path: "/hostmnt",
@@ -178,6 +184,7 @@ describe("host_dir native mount integration", () => {
 
 	test("rename and delete update the host directory when writable", async () => {
 		vm = await AgentOs.create({
+			defaultSoftware: false,
 			mounts: [
 				{
 					path: "/hostmnt",
