@@ -164,10 +164,12 @@ describe("host_dir native mount integration", () => {
 			path.join(tmpDir, "result.txt"),
 			"utf8",
 		);
-		const directGuestAtExit = await vm.readTextFile(
-			"/hostmnt/direct-output.txt",
+		const directGuestAtExit = new TextDecoder().decode(
+			await vm.readFile("/hostmnt/direct-output.txt"),
 		);
-		const pipelineGuestAtExit = await vm.readTextFile("/hostmnt/result.txt");
+		const pipelineGuestAtExit = new TextDecoder().decode(
+			await vm.readFile("/hostmnt/result.txt"),
+		);
 		await new Promise((resolve) => setTimeout(resolve, 500));
 		const directHostAfterDelay = fs.readFileSync(
 			path.join(tmpDir, "direct-output.txt"),
