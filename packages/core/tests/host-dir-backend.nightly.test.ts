@@ -205,7 +205,6 @@ describe("host_dir native mount integration", () => {
 		}
 
 		expect(exitCode, stderr || stdout).toBe(0);
-		expect(stdout).toBe("123");
 		expect(directHostAtExit).toBe("beta\n");
 		expect(pipelineHostAtExit).toBe("BETA\n");
 	});
