@@ -24,7 +24,9 @@ use agentos_kernel::vfs::{
     normalize_path, VfsError, VfsResult, VirtualDirEntry, VirtualFileSystem, VirtualStat,
     VirtualTimeSpec, VirtualUtimeSpec,
 };
-use nix::sys::stat::{fchmod, fstat, fstatat, mkdirat, utimensat, Mode, SFlag, UtimensatFlags};
+use nix::sys::stat::{
+    fchmod, fstat, fstatat, futimens, mkdirat, utimensat, Mode, SFlag, UtimensatFlags,
+};
 use nix::sys::time::TimeSpec;
 use nix::unistd::{linkat, symlinkat, unlinkat, UnlinkatFlags};
 use serde::Deserialize;
@@ -964,6 +966,18 @@ impl HostDirFilesystem {
         mtime: VirtualUtimeSpec,
         follow_symlinks: bool,
     ) -> VfsResult<()> {
+        let normalized = normalize_path(path);
+        if normalized == "/" {
+            let root = self.open_directory_beneath(Path::new("."))?;
+            let omitted = VirtualTimeSpec { sec: 0, nsec: 0 };
+            return futimens(
+                root.as_raw_fd(),
+                &Self::resolve_utime_timespec(atime, omitted),
+                &Self::resolve_utime_timespec(mtime, omitted),
+            )
+            .map_err(|error| io_error_to_vfs("utimes", &normalized, nix_to_io(error)));
+        }
+
         let (parent_dir, _, name, normalized) = self.split_parent(path, false)?;
         if follow_symlinks {
             // `utimes` (follow) rejects a symlink leaf, matching `chmod`/`chown`;

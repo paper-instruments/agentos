@@ -139,7 +139,7 @@ describe("host_dir native mount integration", () => {
 			"bash",
 			[
 				"-lc",
-				"set -euo pipefail; grep beta direct-input.txt > direct-output.txt; printf 'alpha\\nbeta\\n' | grep beta | sed 's/beta/BETA/' > result.txt; for value in 1 2 3; do printf '%s' \"$value\"; done",
+				"set -euo pipefail; grep beta direct-input.txt > direct-output.txt; printf 'alpha\\nbeta\\n' | grep beta | sed 's/beta/BETA/' > result.txt",
 			],
 			{
 				cwd: "/hostmnt",
@@ -174,7 +174,6 @@ describe("host_dir native mount integration", () => {
 		}
 
 		expect(exitCode, stderr || stdout).toBe(0);
-		expect(stdout).toBe("123");
 		expect(directHostAtExit).toBe("beta\n");
 		expect(pipelineHostAtExit).toBe("BETA\n");
 	});

@@ -2023,21 +2023,17 @@ function installPythonWorkspaceFs(pyodide, bridge) {
       memfsDirNodeOps.setattr(node, attr);
     },
     lookup(parent, name) {
-      syncDirectory(parent);
-      try {
-        return memfsDirNodeOps.lookup(parent, name);
-      } catch (error) {
-        if (!(error instanceof FS.ErrnoError) || error.errno !== ERRNO_CODES.ENOENT) {
-          throw error;
-        }
-
-        const guestPath = joinGuestPath(nodeGuestPath(parent), name);
-        // lstat (don't follow) so a directly-looked-up host symlink is a link node.
-        const stat = withFsErrors(() => bridge.fsLstatSync(guestPath));
-        const child = createWorkspaceNode(parent, name, stat.mode, 0, guestPath);
-        updateNodeFromRemoteStat(child, stat);
-        return child;
+      const existing = parent.contents?.[name];
+      if (existing) {
+        return existing;
       }
+
+      const guestPath = joinGuestPath(nodeGuestPath(parent), name);
+      // lstat (don't follow) so a directly-looked-up host symlink is a link node.
+      const stat = withFsErrors(() => bridge.fsLstatSync(guestPath));
+      const child = createWorkspaceNode(parent, name, stat.mode, 0, guestPath);
+      updateNodeFromRemoteStat(child, stat);
+      return child;
     },
     mknod(parent, name, mode, dev) {
       const guestPath = joinGuestPath(nodeGuestPath(parent), name);
