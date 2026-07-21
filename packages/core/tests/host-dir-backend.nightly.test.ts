@@ -228,6 +228,11 @@ describe("host_dir native mount integration", () => {
 					},
 				],
 			});
+			const preflight = await vm.exec(
+				`python3 -c "from pathlib import Path; Path('preflight.txt').write_text('ok')"`,
+				{ cwd: "/hostmnt" },
+			);
+			expect(preflight.exitCode, preflight.stderr || preflight.stdout).toBe(0);
 
 			const source = [
 				"from docx import Document",

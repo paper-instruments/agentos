@@ -585,6 +585,16 @@ impl PythonExecution {
             .map_err(map_javascript_error)
     }
 
+    pub fn respond_javascript_sync_rpc_raw_success(
+        &mut self,
+        id: u64,
+        payload: Vec<u8>,
+    ) -> Result<(), PythonExecutionError> {
+        self.inner
+            .respond_sync_rpc_raw_success(id, payload)
+            .map_err(map_javascript_error)
+    }
+
     pub fn claim_javascript_sync_rpc_response(
         &mut self,
         id: u64,
