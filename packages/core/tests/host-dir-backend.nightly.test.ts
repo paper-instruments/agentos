@@ -178,6 +178,71 @@ describe("host_dir native mount integration", () => {
 		expect(pipelineHostAtExit).toBe("BETA\n");
 	});
 
+	test.runIf(process.platform === "win32")(
+		"bundled Python document packages create and reopen files in a host mount",
+		async () => {
+			vm = await AgentOs.create({
+				permissions: {
+					fs: "allow",
+					network: "deny",
+					childProcess: "allow",
+					process: "allow",
+					env: "allow",
+					binding: "allow",
+				},
+				defaultSoftware: false,
+				mounts: [
+					{
+						path: "/hostmnt",
+						plugin: createHostDirBackend({ hostPath: tmpDir, readOnly: false }),
+					},
+				],
+			});
+
+			const source = [
+				"from docx import Document",
+				"from openpyxl import Workbook, load_workbook",
+				"import pdfplumber",
+				"from pptx import Presentation",
+				"from pypdf import PdfReader",
+				"from reportlab.pdfgen import canvas",
+				"book = Workbook(); book.active['A1'] = 'Feather'; book.save('probe.xlsx')",
+				"document = Document(); document.add_paragraph('Feather'); document.save('probe.docx')",
+				"deck = Presentation(); deck.slides.add_slide(deck.slide_layouts[6]); deck.save('probe.pptx')",
+				"pdf = canvas.Canvas('probe.pdf'); pdf.drawString(72, 720, 'Feather'); pdf.save()",
+				"with pdfplumber.open('probe.pdf') as opened:",
+				"    extracted = opened.pages[0].extract_text()",
+				"print(load_workbook('probe.xlsx').active['A1'].value, len(Document('probe.docx').paragraphs), len(Presentation('probe.pptx').slides), len(PdfReader('probe.pdf').pages), extracted, sep='|')",
+			].join("\n");
+			const { pid } = vm.spawn("python3", ["-c", source], {
+				cwd: "/hostmnt",
+				env: { HOME: "/hostmnt", PWD: "/hostmnt" },
+				stdio: "pipe",
+			});
+			let stdout = "";
+			let stderr = "";
+			vm.onProcessOutput(pid, (event) => {
+				const text = new TextDecoder().decode(event.data);
+				if (event.stream === "stdout") stdout += text;
+				else stderr += text;
+			});
+			await vm.closeProcessStdin(pid);
+			const exitCode = await vm.waitProcess(pid);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			expect(exitCode, stderr || stdout).toBe(0);
+			expect(stdout.trim()).toBe("Feather|1|1|1|Feather");
+			for (const name of [
+				"probe.xlsx",
+				"probe.docx",
+				"probe.pptx",
+				"probe.pdf",
+			]) {
+				expect(fs.statSync(path.join(tmpDir, name)).size).toBeGreaterThan(0);
+			}
+		},
+	);
+
 	test("symlink escape attempt is blocked", async () => {
 		const escapePath = path.join(tmpDir, "escape");
 		fs.writeFileSync(path.join(outsideDir, "secret.txt"), "host secret");
