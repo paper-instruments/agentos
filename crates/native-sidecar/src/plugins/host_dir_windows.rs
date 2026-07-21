@@ -361,7 +361,13 @@ impl VirtualFileSystem for HostDirFilesystem {
         _mode: Option<u32>,
     ) -> VfsResult<()> {
         let (_, relative) = self.relative_path(path)?;
-        if let Some(parent) = relative.parent() {
+        // `Path::parent()` returns an empty path for a file at the mount root.
+        // cap-std treats `create_dir_all("")` as an invalid/denied path on
+        // Windows, even though the file itself is safely relative to `root`.
+        if let Some(parent) = relative
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
             self.root
                 .create_dir_all(parent)
                 .map_err(|error| io_error_to_vfs("mkdir", path, error))?;
