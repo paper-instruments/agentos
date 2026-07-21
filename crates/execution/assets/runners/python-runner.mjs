@@ -2510,6 +2510,15 @@ try {
   installPythonStdin(pyodide);
   installPythonWorkspaceFs(pyodide, pythonVfsRpcBridge);
   installPythonVfsSitePackages(pyodide);
+  const moduleName = readRunnerEnv(PYTHON_MODULE_ENV);
+  const stdinProgram = readRunnerEnv(PYTHON_STDIN_PROGRAM_ENV) === '1';
+  const interactive = readRunnerEnv(PYTHON_INTERACTIVE_ENV) === '1';
+  let pythonProgramSource = null;
+  if (!moduleName && stdinProgram) {
+    pythonProgramSource = readProgramFromStdin();
+  } else if (!moduleName && !interactive) {
+    pythonProgramSource = resolvePythonSource(pyodide);
+  }
   installPythonGuestLoaderHooks();
   if (pyodide?._api?.config) {
     pyodide._api.config.packageBaseUrl = bundledPackageBaseUrl;
@@ -2527,8 +2536,19 @@ try {
       emitWarmupStage('before-load-preload-packages');
       const packageLoadStarted = realPerformance.now();
       await pyodide.loadPackage(preloadPackages);
-      packageLoadMs = realPerformance.now() - packageLoadStarted;
+      packageLoadMs += realPerformance.now() - packageLoadStarted;
       emitWarmupStage('after-load-preload-packages');
+    }
+    const importSource =
+      moduleName && moduleName !== 'pip'
+        ? `import ${moduleName}`
+        : pythonProgramSource;
+    if (importSource && typeof pyodide.loadPackagesFromImports === 'function') {
+      emitWarmupStage('before-load-import-packages');
+      const packageLoadStarted = realPerformance.now();
+      await pyodide.loadPackagesFromImports(importSource);
+      packageLoadMs += realPerformance.now() - packageLoadStarted;
+      emitWarmupStage('after-load-import-packages');
     }
   }
   if (pyodide?._api?.config) {
@@ -2541,9 +2561,6 @@ try {
   installPythonGuestImportBlocklist(pyodide);
   installPythonRuntimeEnv(pyodide);
   applyPythonArgv(pyodide);
-  const moduleName = readRunnerEnv(PYTHON_MODULE_ENV);
-  const stdinProgram = readRunnerEnv(PYTHON_STDIN_PROGRAM_ENV) === '1';
-  const interactive = readRunnerEnv(PYTHON_INTERACTIVE_ENV) === '1';
   const source = moduleName
     ? `module:${moduleName}`
     : stdinProgram
@@ -2573,11 +2590,11 @@ try {
       pyodide.globals.delete('__agentos_module');
     }
   } else if (stdinProgram) {
-    await pyodide.runPythonAsync(readProgramFromStdin());
+    await pyodide.runPythonAsync(pythonProgramSource);
   } else if (interactive) {
     await runPythonRepl(pyodide);
   } else {
-    await pyodide.runPythonAsync(resolvePythonSource(pyodide));
+    await pyodide.runPythonAsync(pythonProgramSource);
   }
   }
 } catch (error) {

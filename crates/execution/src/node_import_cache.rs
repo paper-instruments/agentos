@@ -21,7 +21,7 @@ const NODE_IMPORT_CACHE_SCHEMA_VERSION: &str = "1";
 const NODE_IMPORT_CACHE_LOADER_VERSION: &str = "8";
 // Upstream reached 104 while the reactor branch independently changed bundled
 // assets; use a new generation so no stale materialization survives the merge.
-const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "105";
+const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "106";
 const NODE_IMPORT_CACHE_DIR_PREFIX: &str = "agentos-node-import-cache";
 const DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
 const NODE_IMPORT_CACHE_BLOCKING_JOB_RESERVATION_BYTES: usize = 64 * 1024;
@@ -37,6 +37,8 @@ const BUNDLED_PYODIDE_ASM_JS: &[u8] =
 const BUNDLED_PYODIDE_ASM_WASM: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/pyodide/pyodide.asm.wasm"));
 const BUNDLED_PYODIDE_LOCK: &[u8] = include_bytes!("../assets/pyodide/pyodide-lock.json");
+const BUNDLED_PYODIDE_LOCK_OVERLAY: &[u8] =
+    include_bytes!("../assets/pyodide/agentos-extra-lock.json");
 const BUNDLED_PYTHON_STDLIB_ZIP: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/pyodide/python_stdlib.zip"));
 const BUNDLED_NUMPY_WHL: &[u8] = include_bytes!(concat!(
@@ -69,6 +71,15 @@ struct BundledPyodidePackageAsset {
     bytes: &'static [u8],
 }
 
+macro_rules! externalized_pyodide_package_asset {
+    ($file_name:literal) => {
+        BundledPyodidePackageAsset {
+            file_name: $file_name,
+            bytes: include_bytes!(concat!(env!("OUT_DIR"), "/pyodide/", $file_name)),
+        }
+    };
+}
+
 const BUNDLED_PYODIDE_PACKAGE_ASSETS: &[BundledPyodidePackageAsset] = &[
     BundledPyodidePackageAsset {
         file_name: "numpy-2.2.5-cp313-cp313-pyodide_2025_0_wasm32.whl",
@@ -98,6 +109,23 @@ const BUNDLED_PYODIDE_PACKAGE_ASSETS: &[BundledPyodidePackageAsset] = &[
         file_name: "click-8.3.1-py3-none-any.whl",
         bytes: BUNDLED_CLICK_WHL,
     },
+    externalized_pyodide_package_asset!("cffi-1.17.1-cp313-cp313-pyodide_2025_0_wasm32.whl"),
+    externalized_pyodide_package_asset!("charset_normalizer-3.4.4-py3-none-any.whl"),
+    externalized_pyodide_package_asset!("cryptography-46.0.1-cp313-abi3-pyodide_2025_0_wasm32.whl"),
+    externalized_pyodide_package_asset!("et_xmlfile-2.0.0-py3-none-any.whl"),
+    externalized_pyodide_package_asset!("libopenssl-1.1.1w.zip"),
+    externalized_pyodide_package_asset!("lxml-6.0.2-cp313-cp313-pyodide_2025_0_wasm32.whl"),
+    externalized_pyodide_package_asset!("openpyxl-3.1.5-py2.py3-none-any.whl"),
+    externalized_pyodide_package_asset!("pdfminer_six-20250506-py3-none-any.whl"),
+    externalized_pyodide_package_asset!("pdfplumber-0.11.7-py3-none-any.whl"),
+    externalized_pyodide_package_asset!("pillow-11.3.0-cp313-cp313-pyodide_2025_0_wasm32.whl"),
+    externalized_pyodide_package_asset!("pycparser-2.22-py3-none-any.whl"),
+    externalized_pyodide_package_asset!("pypdf-6.13.2-py3-none-any.whl"),
+    externalized_pyodide_package_asset!("python_docx-1.1.2-py3-none-any.whl"),
+    externalized_pyodide_package_asset!("python_pptx-1.0.2-py3-none-any.whl"),
+    externalized_pyodide_package_asset!("reportlab-5.0.0-py3-none-any.whl"),
+    externalized_pyodide_package_asset!("typing_extensions-4.15.0-py3-none-any.whl"),
+    externalized_pyodide_package_asset!("xlsxwriter-3.2.9-py3-none-any.whl"),
 ];
 const NODE_IMPORT_CACHE_LOADER_TEMPLATE: &str = r#"
 import crypto from 'node:crypto';
@@ -2739,9 +2767,10 @@ impl NodeImportCacheMaterialization {
             &self.pyodide_dist_path.join("pyodide.asm.wasm"),
             BUNDLED_PYODIDE_ASM_WASM,
         )?;
+        let pyodide_lock = merged_bundled_pyodide_lock()?;
         write_bytes_if_changed(
             &self.pyodide_dist_path.join("pyodide-lock.json"),
-            BUNDLED_PYODIDE_LOCK,
+            &pyodide_lock,
         )?;
         write_bytes_if_changed(
             &self.pyodide_dist_path.join("python_stdlib.zip"),
@@ -2758,6 +2787,40 @@ impl NodeImportCacheMaterialization {
         )?;
         Ok(())
     }
+}
+
+fn merged_bundled_pyodide_lock() -> Result<Vec<u8>, io::Error> {
+    let invalid_lock = |error: serde_json::Error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid bundled Pyodide package lock: {error}"),
+        )
+    };
+    let mut lock: serde_json::Value =
+        serde_json::from_slice(BUNDLED_PYODIDE_LOCK).map_err(invalid_lock)?;
+    let overlay: serde_json::Value =
+        serde_json::from_slice(BUNDLED_PYODIDE_LOCK_OVERLAY).map_err(invalid_lock)?;
+    let packages = lock
+        .get_mut("packages")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "Pyodide lock has no packages")
+        })?;
+    let overlay_packages = overlay
+        .get("packages")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Pyodide package overlay has no packages",
+            )
+        })?;
+    packages.extend(
+        overlay_packages
+            .iter()
+            .map(|(name, package)| (name.clone(), package.clone())),
+    );
+    serde_json::to_vec(&lock).map_err(invalid_lock)
 }
 
 fn check_materialization_cancelled(cancelled: &AtomicBool) -> Result<(), io::Error> {
@@ -3745,8 +3808,9 @@ fn write_file_if_changed(path: &Path, contents: &str) -> Result<(), io::Error> {
 #[cfg(test)]
 mod tests {
     use super::{
-        NodeImportCache, NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_LOCK,
-        NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_MS, NODE_WASM_RUNNER_SOURCE,
+        NodeImportCache, BUNDLED_PYODIDE_PACKAGE_ASSETS,
+        NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_LOCK, NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_MS,
+        NODE_WASM_RUNNER_SOURCE,
     };
     use crate::host_node::node_binary;
     use serde_json::Value;
@@ -4468,17 +4532,32 @@ export async function loadPyodide(options) {
             "pyodide.asm.wasm",
             "pyodide-lock.json",
             "python_stdlib.zip",
-            "numpy-2.2.5-cp313-cp313-pyodide_2025_0_wasm32.whl",
-            "pandas-2.3.3-cp313-cp313-pyodide_2025_0_wasm32.whl",
-            "python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
-            "pytz-2025.2-py2.py3-none-any.whl",
-            "six-1.17.0-py2.py3-none-any.whl",
         ] {
             assert!(
                 import_cache.pyodide_dist_path().join(file_name).is_file(),
                 "expected bundled Pyodide asset {file_name} to be materialized"
             );
         }
+        for asset in BUNDLED_PYODIDE_PACKAGE_ASSETS {
+            assert!(
+                import_cache
+                    .pyodide_dist_path()
+                    .join(asset.file_name)
+                    .is_file(),
+                "expected bundled Pyodide package {} to be materialized",
+                asset.file_name
+            );
+        }
+
+        let lock: serde_json::Value = serde_json::from_slice(
+            &fs::read(import_cache.pyodide_dist_path().join("pyodide-lock.json"))
+                .expect("read materialized Pyodide lock"),
+        )
+        .expect("parse materialized Pyodide lock");
+        assert_eq!(
+            lock["packages"]["openpyxl"]["version"],
+            serde_json::Value::String(String::from("3.1.5"))
+        );
     }
 
     #[test]

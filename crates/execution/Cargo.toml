@@ -16,6 +16,23 @@ exclude = [
     "assets/pyodide/python_stdlib.zip",
     "assets/pyodide/numpy-2.2.5-cp313-cp313-pyodide_2025_0_wasm32.whl",
     "assets/pyodide/pandas-2.3.3-cp313-cp313-pyodide_2025_0_wasm32.whl",
+    "assets/pyodide/cffi-1.17.1-cp313-cp313-pyodide_2025_0_wasm32.whl",
+    "assets/pyodide/charset_normalizer-3.4.4-py3-none-any.whl",
+    "assets/pyodide/cryptography-46.0.1-cp313-abi3-pyodide_2025_0_wasm32.whl",
+    "assets/pyodide/et_xmlfile-2.0.0-py3-none-any.whl",
+    "assets/pyodide/libopenssl-1.1.1w.zip",
+    "assets/pyodide/lxml-6.0.2-cp313-cp313-pyodide_2025_0_wasm32.whl",
+    "assets/pyodide/openpyxl-3.1.5-py2.py3-none-any.whl",
+    "assets/pyodide/pdfminer_six-20250506-py3-none-any.whl",
+    "assets/pyodide/pdfplumber-0.11.7-py3-none-any.whl",
+    "assets/pyodide/pillow-11.3.0-cp313-cp313-pyodide_2025_0_wasm32.whl",
+    "assets/pyodide/pycparser-2.22-py3-none-any.whl",
+    "assets/pyodide/pypdf-6.13.2-py3-none-any.whl",
+    "assets/pyodide/python_docx-1.1.2-py3-none-any.whl",
+    "assets/pyodide/python_pptx-1.0.2-py3-none-any.whl",
+    "assets/pyodide/reportlab-5.0.0-py3-none-any.whl",
+    "assets/pyodide/typing_extensions-4.15.0-py3-none-any.whl",
+    "assets/pyodide/xlsxwriter-3.2.9-py3-none-any.whl",
 ]
 
 [lib]

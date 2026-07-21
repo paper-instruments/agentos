@@ -2730,6 +2730,72 @@ fn python_runtime_imports_bundled_pandas_without_network() {
     );
 }
 
+fn python_runtime_auto_loads_bundled_document_packages_without_network() {
+    assert_node_available();
+
+    let mut sidecar = new_sidecar("python-document-packages");
+    let cwd = temp_dir("python-document-packages-cwd");
+    let connection_id = authenticate_wire(&mut sidecar, "conn-python");
+    let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
+    let (vm_id, _) = create_vm_wire(
+        &mut sidecar,
+        3,
+        &connection_id,
+        &session_id,
+        GuestRuntimeKind::Python,
+        &cwd,
+    );
+
+    execute_inline_python_with_env(
+        &mut sidecar,
+        4,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "proc-python-document-packages",
+        concat!(
+            "import docx, openpyxl, pdfplumber, pptx, pypdf, reportlab\n",
+            "from reportlab.pdfgen.canvas import Canvas\n",
+            "book = openpyxl.Workbook()\n",
+            "book.active['A1'] = 'Feather'\n",
+            "book.save('probe.xlsx')\n",
+            "document = docx.Document()\n",
+            "document.add_paragraph('Feather')\n",
+            "document.save('probe.docx')\n",
+            "deck = pptx.Presentation()\n",
+            "deck.slides.add_slide(deck.slide_layouts[6])\n",
+            "deck.save('probe.pptx')\n",
+            "canvas = Canvas('probe.pdf')\n",
+            "canvas.drawString(72, 720, 'Feather')\n",
+            "canvas.save()\n",
+            "print('|'.join([",
+            "openpyxl.load_workbook('probe.xlsx').active['A1'].value, ",
+            "str(len(docx.Document('probe.docx').paragraphs)), ",
+            "str(len(pptx.Presentation('probe.pptx').slides)), ",
+            "str(len(pypdf.PdfReader('probe.pdf').pages)), ",
+            "pdfplumber.__version__, reportlab.Version]))",
+        ),
+        HashMap::new(),
+    );
+
+    let (stdout, stderr, exit_code) = collect_process_output_with_timeout(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "proc-python-document-packages",
+        Duration::from_secs(90),
+    );
+
+    assert_eq!(exit_code, 0, "stdout: {stdout}\nstderr: {stderr}");
+    assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
+    assert_eq!(
+        stdout.trim(),
+        "Feather|1|1|1|0.11.7|5.0.0",
+        "unexpected document package result"
+    );
+}
+
 fn python_runtime_supports_micropip_package_installation() {
     assert_node_available();
 
@@ -3930,6 +3996,7 @@ fn python_suite() {
     python_runtime_kill_process_terminates_blocked_stdin_reads();
     python_runtime_imports_bundled_numpy_without_network();
     python_runtime_imports_bundled_pandas_without_network();
+    python_runtime_auto_loads_bundled_document_packages_without_network();
     python_runtime_supports_micropip_package_installation();
     python_runtime_micropip_install_respects_network_permissions();
     python_runtime_routes_dns_and_http_through_sidecar_bridge();
@@ -3986,6 +4053,7 @@ mod python_split {
         python_runtime_kill_process_terminates_blocked_stdin_reads,
         python_runtime_imports_bundled_numpy_without_network,
         python_runtime_imports_bundled_pandas_without_network,
+        python_runtime_auto_loads_bundled_document_packages_without_network,
         python_runtime_routes_dns_and_http_through_sidecar_bridge,
         python_runtime_routes_requests_through_sidecar_bridge,
         python_runtime_surfaces_network_permission_errors,
