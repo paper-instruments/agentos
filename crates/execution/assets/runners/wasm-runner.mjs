@@ -1013,11 +1013,8 @@ function traceHostProcess(event, details) {
   const enabled =
     (typeof TRACE_HOST_PROCESS === 'boolean' && TRACE_HOST_PROCESS) ||
     (typeof HOST_PROCESS_ENV !== 'undefined' &&
-      (HOST_PROCESS_ENV?.AGENTOS_TRACE_HOST_PROCESS === '1' ||
-        HOST_PROCESS_ENV?.AGENTOS_TEST_TRACE_HOST_PROCESS === '1')) ||
-    (typeof process !== 'undefined' &&
-      (process?.env?.AGENTOS_TRACE_HOST_PROCESS === '1' ||
-        process?.env?.AGENTOS_TEST_TRACE_HOST_PROCESS === '1'));
+      HOST_PROCESS_ENV?.AGENTOS_TRACE_HOST_PROCESS === '1') ||
+    (typeof process !== 'undefined' && process?.env?.AGENTOS_TRACE_HOST_PROCESS === '1');
   if (!enabled) {
     return;
   }

@@ -139,12 +139,11 @@ describe("host_dir native mount integration", () => {
 			"bash",
 			[
 				"-lc",
-				"set -euo pipefail; export AGENTOS_TEST_TRACE_HOST_PROCESS=1; grep beta direct-input.txt > direct-output.txt; printf 'alpha\\nbeta\\n' | grep beta | sed 's/beta/BETA/' > result.txt; for value in 1 2 3; do printf '%s' \"$value\"; done",
+				"set -euo pipefail; grep beta direct-input.txt > direct-output.txt; printf 'alpha\\nbeta\\n' | grep beta | sed 's/beta/BETA/' > result.txt; for value in 1 2 3; do printf '%s' \"$value\"; done",
 			],
 			{
 				cwd: "/hostmnt",
 				env: {
-					AGENTOS_TEST_TRACE_HOST_PROCESS: "1",
 					HOME: "/hostmnt",
 					PWD: "/hostmnt",
 				},
@@ -168,35 +167,6 @@ describe("host_dir native mount integration", () => {
 			path.join(tmpDir, "result.txt"),
 			"utf8",
 		);
-		const directGuestAtExit = new TextDecoder().decode(
-			await vm.readFile("/hostmnt/direct-output.txt"),
-		);
-		const pipelineGuestAtExit = new TextDecoder().decode(
-			await vm.readFile("/hostmnt/result.txt"),
-		);
-		await new Promise((resolve) => setTimeout(resolve, 500));
-		const directHostAfterDelay = fs.readFileSync(
-			path.join(tmpDir, "direct-output.txt"),
-			"utf8",
-		);
-		const pipelineHostAfterDelay = fs.readFileSync(
-			path.join(tmpDir, "result.txt"),
-			"utf8",
-		);
-		if (directHostAtExit !== "beta\n" || pipelineHostAtExit !== "BETA\n") {
-			console.error("bash stderr", stderr);
-			console.error(
-				"redirect diagnostics",
-				JSON.stringify({
-					directHostAtExit,
-					pipelineHostAtExit,
-					directGuestAtExit,
-					pipelineGuestAtExit,
-					directHostAfterDelay,
-					pipelineHostAfterDelay,
-				}),
-			);
-		}
 
 		expect(exitCode, stderr || stdout).toBe(0);
 		expect(stdout).toBe("123");
