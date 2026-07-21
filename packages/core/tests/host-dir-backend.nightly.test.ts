@@ -160,6 +160,7 @@ describe("host_dir native mount integration", () => {
 		});
 		await vm.closeProcessStdin(pid);
 		const exitCode = await vm.waitProcess(pid);
+		await new Promise((resolve) => setTimeout(resolve, 100));
 		const directHostAtExit = fs.readFileSync(
 			path.join(tmpDir, "direct-output.txt"),
 			"utf8",
@@ -202,10 +203,18 @@ describe("host_dir native mount integration", () => {
 			const source = [
 				"from docx import Document",
 				"from openpyxl import Workbook, load_workbook",
+				"import os, sys",
 				"import pdfplumber",
 				"from pptx import Presentation",
 				"from pypdf import PdfReader",
 				"from reportlab.pdfgen import canvas",
+				'print(f\'agentos-python-fs={os.getcwd()}|{oct(os.stat(".").st_mode)}|{os.access(".", os.W_OK)}\', file=sys.stderr, flush=True)',
+				"for candidate in ('relative-write.tmp', '/hostmnt/absolute-write.tmp'):",
+				"    try:",
+				"        with open(candidate, 'w+b') as probe: probe.write(b'probe')",
+				"        print(f'agentos-python-write={candidate}|ok', file=sys.stderr, flush=True)",
+				"    except Exception as error:",
+				"        print(f'agentos-python-write={candidate}|{error!r}', file=sys.stderr, flush=True)",
 				"book = Workbook(); book.active['A1'] = 'Feather'; book.save('probe.xlsx')",
 				"document = Document(); document.add_paragraph('Feather'); document.save('probe.docx')",
 				"deck = Presentation(); deck.slides.add_slide(deck.slide_layouts[6]); deck.save('probe.pptx')",
