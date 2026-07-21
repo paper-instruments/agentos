@@ -1,0 +1,191 @@
+{
+  "packages": {
+    "cffi": {
+      "depends": ["pycparser"],
+      "file_name": "cffi-1.17.1-cp313-cp313-pyodide_2025_0_wasm32.whl",
+      "imports": ["cffi"],
+      "install_dir": "site",
+      "name": "cffi",
+      "package_type": "package",
+      "sha256": "ad166ed3d2407d019362b1a2380cfc8ab0869908578dd20b12ce822f021ebac2",
+      "unvendored_tests": false,
+      "version": "1.17.1"
+    },
+    "charset-normalizer": {
+      "depends": [],
+      "file_name": "charset_normalizer-3.4.4-py3-none-any.whl",
+      "imports": ["charset_normalizer"],
+      "install_dir": "site",
+      "name": "charset-normalizer",
+      "package_type": "package",
+      "sha256": "7a32c560861a02ff789ad905a2fe94e3f840803362c84fecf1851cb4cf3dc37f",
+      "unvendored_tests": false,
+      "version": "3.4.4"
+    },
+    "cryptography": {
+      "depends": ["libopenssl", "six", "cffi"],
+      "file_name": "cryptography-46.0.1-cp313-abi3-pyodide_2025_0_wasm32.whl",
+      "imports": ["cryptography"],
+      "install_dir": "site",
+      "name": "cryptography",
+      "package_type": "package",
+      "sha256": "c3e558a314f8eb10f76bb02a2973a4c0f97dae42aae74f7230e82d99d55cb3cf",
+      "unvendored_tests": false,
+      "version": "46.0.1"
+    },
+    "et-xmlfile": {
+      "depends": [],
+      "file_name": "et_xmlfile-2.0.0-py3-none-any.whl",
+      "imports": ["et_xmlfile"],
+      "install_dir": "site",
+      "name": "et-xmlfile",
+      "package_type": "package",
+      "sha256": "7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa",
+      "unvendored_tests": false,
+      "version": "2.0.0"
+    },
+    "libopenssl": {
+      "depends": [],
+      "file_name": "libopenssl-1.1.1w.zip",
+      "imports": [],
+      "install_dir": "dynlib",
+      "name": "libopenssl",
+      "package_type": "shared_library",
+      "sha256": "8d073841eb93488e79f0f1f354cbe03dad17d6705e75249b07516040869a5ad1",
+      "unvendored_tests": false,
+      "version": "1.1.1w"
+    },
+    "lxml": {
+      "depends": [],
+      "file_name": "lxml-6.0.2-cp313-cp313-pyodide_2025_0_wasm32.whl",
+      "imports": ["lxml"],
+      "install_dir": "site",
+      "name": "lxml",
+      "package_type": "package",
+      "sha256": "e1b1a3e9407f3b6ce5c28c368699315c2ca894ee6e2418336545351ab3887e4c",
+      "unvendored_tests": false,
+      "version": "6.0.2"
+    },
+    "openpyxl": {
+      "depends": ["et-xmlfile"],
+      "file_name": "openpyxl-3.1.5-py2.py3-none-any.whl",
+      "imports": ["openpyxl"],
+      "install_dir": "site",
+      "name": "openpyxl",
+      "package_type": "package",
+      "sha256": "5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2",
+      "unvendored_tests": false,
+      "version": "3.1.5"
+    },
+    "pdfminer-six": {
+      "depends": ["charset-normalizer", "cryptography"],
+      "file_name": "pdfminer_six-20250506-py3-none-any.whl",
+      "imports": ["pdfminer"],
+      "install_dir": "site",
+      "name": "pdfminer-six",
+      "package_type": "package",
+      "sha256": "d81ad173f62e5f841b53a8ba63af1a4a355933cfc0ffabd608e568b9193909e3",
+      "unvendored_tests": false,
+      "version": "20250506"
+    },
+    "pdfplumber": {
+      "depends": ["pdfminer-six", "pillow"],
+      "file_name": "pdfplumber-0.11.7-py3-none-any.whl",
+      "imports": ["pdfplumber"],
+      "install_dir": "site",
+      "name": "pdfplumber",
+      "package_type": "package",
+      "sha256": "edd2195cca68bd770da479cf528a737e362968ec2351e62a6c0b71ff612ac25e",
+      "unvendored_tests": false,
+      "version": "0.11.7"
+    },
+    "pillow": {
+      "depends": [],
+      "file_name": "pillow-11.3.0-cp313-cp313-pyodide_2025_0_wasm32.whl",
+      "imports": ["PIL"],
+      "install_dir": "site",
+      "name": "Pillow",
+      "package_type": "package",
+      "sha256": "d23583dc6e2a526acdeb9c426e3c617e6eca11ad3897dd23375e2244520fd9cd",
+      "unvendored_tests": false,
+      "version": "11.3.0"
+    },
+    "pycparser": {
+      "depends": [],
+      "file_name": "pycparser-2.22-py3-none-any.whl",
+      "imports": ["pycparser"],
+      "install_dir": "site",
+      "name": "pycparser",
+      "package_type": "package",
+      "sha256": "3322a697f8cc9539be8236eff37cdb1040e96eb9684a3610ba69c99c370c1e8c",
+      "unvendored_tests": false,
+      "version": "2.22"
+    },
+    "pypdf": {
+      "depends": [],
+      "file_name": "pypdf-6.13.2-py3-none-any.whl",
+      "imports": ["pypdf"],
+      "install_dir": "site",
+      "name": "pypdf",
+      "package_type": "package",
+      "sha256": "6eeb9e57693f29d41bd01255d02660cbbb41fd7fc818a982677389a35e4f2083",
+      "unvendored_tests": false,
+      "version": "6.13.2"
+    },
+    "python-docx": {
+      "depends": ["lxml", "typing-extensions"],
+      "file_name": "python_docx-1.1.2-py3-none-any.whl",
+      "imports": ["docx"],
+      "install_dir": "site",
+      "name": "python-docx",
+      "package_type": "package",
+      "sha256": "08c20d6058916fb19853fcf080f7f42b6270d89eac9fa5f8c15f691c0017fabe",
+      "unvendored_tests": false,
+      "version": "1.1.2"
+    },
+    "python-pptx": {
+      "depends": ["pillow", "xlsxwriter", "lxml", "typing-extensions"],
+      "file_name": "python_pptx-1.0.2-py3-none-any.whl",
+      "imports": ["pptx"],
+      "install_dir": "site",
+      "name": "python-pptx",
+      "package_type": "package",
+      "sha256": "160838e0b8565a8b1f67947675886e9fea18aa5e795db7ae531606d68e785cba",
+      "unvendored_tests": false,
+      "version": "1.0.2"
+    },
+    "reportlab": {
+      "depends": ["pillow", "charset-normalizer"],
+      "file_name": "reportlab-5.0.0-py3-none-any.whl",
+      "imports": ["reportlab"],
+      "install_dir": "site",
+      "name": "reportlab",
+      "package_type": "package",
+      "sha256": "9d5a3affa84919e1111ede580031266a570e93b1ce388219621347965ff1d93c",
+      "unvendored_tests": false,
+      "version": "5.0.0"
+    },
+    "typing-extensions": {
+      "depends": [],
+      "file_name": "typing_extensions-4.15.0-py3-none-any.whl",
+      "imports": ["typing_extensions"],
+      "install_dir": "site",
+      "name": "typing-extensions",
+      "package_type": "package",
+      "sha256": "f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548",
+      "unvendored_tests": false,
+      "version": "4.15.0"
+    },
+    "xlsxwriter": {
+      "depends": [],
+      "file_name": "xlsxwriter-3.2.9-py3-none-any.whl",
+      "imports": ["xlsxwriter"],
+      "install_dir": "site",
+      "name": "xlsxwriter",
+      "package_type": "package",
+      "sha256": "9a5db42bc5dff014806c58a20b9eae7322a134abb6fce3c92c181bfb275ec5b3",
+      "unvendored_tests": false,
+      "version": "3.2.9"
+    }
+  }
+}

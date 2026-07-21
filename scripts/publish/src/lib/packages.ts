@@ -86,6 +86,7 @@ export const DEFAULT_SIDECAR_PLATFORMS = [
 	"linux-arm64-gnu",
 	"darwin-x64",
 	"darwin-arm64",
+	"windows-x64",
 ] as const;
 
 export function sidecarPlatforms(): string[] {

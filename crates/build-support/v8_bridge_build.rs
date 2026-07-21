@@ -213,7 +213,11 @@ fn resolve_build_script(repo_root: &Path) -> PathBuf {
 }
 
 fn require_pnpm(repo_root: &Path, debug: bool) {
-    let output = Command::new("pnpm")
+    // pnpm/action-setup installs a `pnpm.cmd` launcher on Windows. Rust's
+    // `Command` does not apply cmd.exe/PATHEXT resolution, so invoking the Unix
+    // launcher name there incorrectly reports that pnpm is missing.
+    let pnpm = if cfg!(windows) { "pnpm.cmd" } else { "pnpm" };
+    let output = Command::new(pnpm)
         .arg("--version")
         .current_dir(repo_root)
         .output()

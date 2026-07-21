@@ -34,6 +34,9 @@ mod metadata;
 #[path = "../src/package_projection.rs"]
 mod package_projection;
 #[allow(dead_code)]
+#[path = "../src/platform_fs.rs"]
+mod platform_fs;
+#[allow(dead_code)]
 #[path = "../src/plugins/mod.rs"]
 mod plugins;
 #[allow(dead_code, unused_imports, clippy::enum_variant_names)]

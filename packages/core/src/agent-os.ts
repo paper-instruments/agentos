@@ -934,16 +934,27 @@ interface NormalizedPackageRef {
 	path: string;
 }
 
+/** @internal Exported for platform-path contract tests. */
+export function normalizePackageHostPath(
+	value: string,
+	platform: NodeJS.Platform = process.platform,
+): string {
+	if (platform === "win32" && /^\/[A-Za-z]:\//.test(value)) {
+		return fileURLToPath(new URL(`file://${value}`), { windows: true });
+	}
+	return value;
+}
+
 function normalizePackageRef(value: unknown): NormalizedPackageRef | undefined {
 	// The single package reference is `packagePath`: the packed `.aospkg` file
 	// (registry-built packages export `{ packagePath }`), or a package dir for
 	// local transition fixtures. A raw string is shorthand for the same path.
 	if (typeof value === "string") {
-		return { path: value };
+		return { path: normalizePackageHostPath(value) };
 	}
 	const record = toRecord(value);
 	if (typeof record.packagePath === "string") {
-		return { path: record.packagePath };
+		return { path: normalizePackageHostPath(record.packagePath) };
 	}
 	// Recognizably-legacy shapes fail loudly: silently dropping a software
 	// entry boots a VM with missing packages and no diagnostic.

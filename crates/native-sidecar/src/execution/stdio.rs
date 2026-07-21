@@ -1,13 +1,16 @@
 use super::*;
 
+#[cfg(unix)]
 pub(super) fn wait_fd_readable_until(fd: BorrowedFd<'_>, deadline: Instant) -> bool {
     wait_fd_until(fd, deadline, PollFlags::POLLIN)
 }
 
+#[cfg(unix)]
 fn wait_fd_writable_until(fd: BorrowedFd<'_>, deadline: Instant) -> bool {
     wait_fd_until(fd, deadline, PollFlags::POLLOUT)
 }
 
+#[cfg(unix)]
 fn wait_fd_until(fd: BorrowedFd<'_>, deadline: Instant, interest: PollFlags) -> bool {
     let remaining = deadline.saturating_duration_since(Instant::now());
     if remaining.is_zero() {
@@ -30,6 +33,7 @@ fn wait_fd_until(fd: BorrowedFd<'_>, deadline: Instant, interest: PollFlags) -> 
     }
 }
 
+#[cfg(unix)]
 pub(super) fn write_all_nonblocking<S>(
     stream: &mut S,
     contents: &[u8],
@@ -67,6 +71,60 @@ where
                             "ERR_AGENTOS_OPERATION_DEADLINE: socket write exceeded {}ms; raise limits.reactor.operationDeadlineMs",
                             limits.operation_deadline.as_millis()
                         ),
+                    )));
+                }
+            }
+            Err(error) => return Err(sidecar_net_error(error)),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+pub(super) fn wait_socket_until(deadline: Instant) -> bool {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return false;
+    }
+    std::thread::sleep(remaining.min(Duration::from_millis(1)));
+    true
+}
+
+#[cfg(windows)]
+pub(super) fn write_all_nonblocking<S>(
+    stream: &mut S,
+    contents: &[u8],
+    limits: ReactorIoLimits,
+) -> Result<(), SidecarError>
+where
+    S: Write,
+{
+    let deadline = Instant::now() + limits.operation_deadline;
+    let mut remaining = contents;
+    let mut operations = 0;
+    while !remaining.is_empty() {
+        if operations >= limits.operation_quantum.max(1) {
+            std::thread::yield_now();
+            operations = 0;
+        }
+        let chunk_len = remaining.len().min(limits.byte_quantum.max(1));
+        match stream.write(&remaining[..chunk_len]) {
+            Ok(0) => {
+                return Err(sidecar_net_error(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "socket write returned zero bytes",
+                )))
+            }
+            Ok(written) => {
+                remaining = &remaining[written..];
+                operations += 1;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if !wait_socket_until(deadline) {
+                    return Err(sidecar_net_error(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "ERR_AGENTOS_OPERATION_DEADLINE: socket write timed out",
                     )));
                 }
             }

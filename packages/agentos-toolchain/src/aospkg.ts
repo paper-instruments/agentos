@@ -16,15 +16,15 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import {
-	encodeMountIndex,
-	encodePackageManifest,
-	TarEntryKind,
 	type AgentBlock,
 	type CommandTarget,
+	encodeMountIndex,
+	encodePackageManifest,
 	type ManPage,
 	type PackageManifest,
 	type ProvidesBlock,
 	type TarEntry,
+	TarEntryKind,
 } from "./generated-package-format.js";
 
 const AOSPKG_MAGIC = Uint8Array.from([0x89, 0x41, 0x4f, 0x53]); // 0x89 'A' 'O' 'S'
@@ -83,7 +83,10 @@ interface RawTarMember {
 
 /** Pack `sourceTar` into a `.aospkg` at `dest`. The source
  * `agentos-package.json` must carry `name` and `version`. */
-export function packAospkgFromTar(sourceTar: string, dest: string): AospkgSummary {
+export function packAospkgFromTar(
+	sourceTar: string,
+	dest: string,
+): AospkgSummary {
 	const source = readFileSync(sourceTar);
 	const { bytes, summary } = packAospkgFromTarBytes(source);
 	writeFileSync(dest, bytes);
@@ -172,8 +175,20 @@ export function packAospkgFromTarBytes(source: Buffer): {
 	// Byte-wise sort matching the Rust packer (localeCompare varies with the
 	// ICU build and disagrees with Rust's byte order on mixed-case names).
 	const sortedPaths = [...entries.keys()].sort(byteCompare);
-	const tarEntries = sortedPaths.map((path) => entries.get(path) as TarEntry);
 	const commands = commandTargets(sortedPaths, packageJson);
+	// Windows has no POSIX executable bit: chmodSync(0o755) succeeds but the
+	// bundled BSD tar may still record staged WASM commands as 0666. The package
+	// manifest is the authoritative command declaration, so give each regular
+	// command entry guest execute bits in the mount index. This changes only the
+	// virtual POSIX metadata; it does not broaden host permissions.
+	for (const command of commands) {
+		const path = `/${command.entry.replace(/^\.\//, "").replace(/^\/+/, "")}`;
+		const entry = entries.get(path);
+		if (entry?.kind === TarEntryKind.File) {
+			entries.set(path, { ...entry, mode: entry.mode | 0o111 });
+		}
+	}
+	const tarEntries = sortedPaths.map((path) => entries.get(path) as TarEntry);
 	const manPages = manPagesFromIndex(sortedPaths);
 	const agent = agentBlock(sourceManifest);
 	const snapshotBundlePath =
@@ -265,7 +280,11 @@ function indexEntry(member: RawTarMember): TarEntry | undefined {
 			linkTarget: member.linkTarget,
 		};
 	}
-	if (member.typeflag === "0" || member.typeflag === "\0" || member.typeflag === "7") {
+	if (
+		member.typeflag === "0" ||
+		member.typeflag === "\0" ||
+		member.typeflag === "7"
+	) {
 		return {
 			...base,
 			kind: TarEntryKind.File,
@@ -364,7 +383,10 @@ function manPagesFromIndex(sortedPaths: string[]): ManPage[] {
 			if (parts.length !== 2) return [];
 			return [{ section: parts[0], page: parts[1] }];
 		})
-		.sort((a, b) => byteCompare(a.section, b.section) || byteCompare(a.page, b.page));
+		.sort(
+			(a, b) =>
+				byteCompare(a.section, b.section) || byteCompare(a.page, b.page),
+		);
 }
 
 function isProjectableCommandName(name: string): boolean {

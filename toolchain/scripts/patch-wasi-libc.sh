@@ -124,10 +124,15 @@ if [ "$MODE" = "apply" ] || [ "$MODE" = "check" ]; then
 fi
 
 # Find patch files
+PATCH_FILES=()
 if [ "$MODE" = "reverse" ]; then
-    mapfile -t PATCH_FILES < <(find "$PATCHES_DIR" -name '*.patch' -type f 2>/dev/null | sort -r)
+    while IFS= read -r patch_file; do
+        PATCH_FILES+=("$patch_file")
+    done < <(find "$PATCHES_DIR" -name '*.patch' -type f 2>/dev/null | sort -r)
 else
-    mapfile -t PATCH_FILES < <(find "$PATCHES_DIR" -name '*.patch' -type f 2>/dev/null | sort)
+    while IFS= read -r patch_file; do
+        PATCH_FILES+=("$patch_file")
+    done < <(find "$PATCHES_DIR" -name '*.patch' -type f 2>/dev/null | sort)
 fi
 
 if [ "${#PATCH_FILES[@]}" -eq 0 ]; then

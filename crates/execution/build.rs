@@ -20,6 +20,23 @@ const EXTERNALIZED_PYODIDE_ASSETS: &[&str] = &[
     "python_stdlib.zip",
     "numpy-2.2.5-cp313-cp313-pyodide_2025_0_wasm32.whl",
     "pandas-2.3.3-cp313-cp313-pyodide_2025_0_wasm32.whl",
+    "cffi-1.17.1-cp313-cp313-pyodide_2025_0_wasm32.whl",
+    "charset_normalizer-3.4.4-py3-none-any.whl",
+    "cryptography-46.0.1-cp313-abi3-pyodide_2025_0_wasm32.whl",
+    "et_xmlfile-2.0.0-py3-none-any.whl",
+    "libopenssl-1.1.1w.zip",
+    "lxml-6.0.2-cp313-cp313-pyodide_2025_0_wasm32.whl",
+    "openpyxl-3.1.5-py2.py3-none-any.whl",
+    "pdfminer_six-20250506-py3-none-any.whl",
+    "pdfplumber-0.11.7-py3-none-any.whl",
+    "pillow-11.3.0-cp313-cp313-pyodide_2025_0_wasm32.whl",
+    "pycparser-2.22-py3-none-any.whl",
+    "pypdf-6.13.2-py3-none-any.whl",
+    "python_docx-1.1.2-py3-none-any.whl",
+    "python_pptx-1.0.2-py3-none-any.whl",
+    "reportlab-5.0.0-py3-none-any.whl",
+    "typing_extensions-4.15.0-py3-none-any.whl",
+    "xlsxwriter-3.2.9-py3-none-any.whl",
 ];
 
 fn main() {

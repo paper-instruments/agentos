@@ -3085,7 +3085,14 @@ function releaseFdHandle(handle) {
     handle.pipe.readHandleCount = Math.max(0, handle.pipe.readHandleCount - 1);
   } else if (handle.kind === 'pipe-write') {
     handle.pipe.writeHandleCount = Math.max(0, handle.pipe.writeHandleCount - 1);
-    if (handle.pipe.writeHandleCount === 0 && (handle.pipe.producers?.size ?? 0) === 0) {
+    // A fast producer can exit before a freshly spawned Windows consumer is
+    // ready to accept stdin. Keep that consumer open while queued bytes remain;
+    // pumpChildInputPipe flushes them and then delivers EOF in order.
+    if (
+      handle.pipe.writeHandleCount === 0 &&
+      (handle.pipe.producers?.size ?? 0) === 0 &&
+      (handle.pipe.chunks?.length ?? 0) === 0
+    ) {
       closePipeConsumers(handle.pipe);
     }
   }
@@ -3547,7 +3554,14 @@ function unregisterPipeProducer(pipe, producerKey) {
     return;
   }
   pipe.producers.delete(producerKey);
-  if (pipe.producers.size === 0 && (pipe.writeHandleCount ?? 0) === 0) {
+  // Do not turn the producer's exit into EOF until every byte already queued
+  // for a not-yet-ready consumer has been delivered. The consumer pump owns
+  // the final flush-and-close transition.
+  if (
+    pipe.producers.size === 0 &&
+    (pipe.writeHandleCount ?? 0) === 0 &&
+    pipe.chunks.length === 0
+  ) {
     closePipeConsumers(pipe);
   }
   collectInactivePipeHandles(pipe);
@@ -4281,20 +4295,6 @@ function pumpChildInputPipe(record, waitMs) {
   }
   record.pumpingInputPipe = true;
   try {
-    const stdinReadyAt = Number(record?.stdinReadyAtMs) || 0;
-    if (stdinReadyAt > Date.now()) {
-      traceHostProcess('pump-child-input-deferred', {
-        childId: record?.childId ?? null,
-        waitMs: Number(waitMs) >>> 0,
-        stdinReadyAt,
-        now: Date.now(),
-        chunkCount: inputPipe.chunks.length,
-        writeHandleCount: inputPipe.writeHandleCount ?? null,
-        producerCount: inputPipe.producers?.size ?? null,
-      });
-      return false;
-    }
-
     let progressed = false;
     traceHostProcess('pump-child-input-begin', {
       childId: record?.childId ?? null,
@@ -7026,7 +7026,6 @@ const hostProcessImport = {
               stdinPipe,
               stdoutPipe,
               stderrPipe,
-              stdinReadyAtMs: Date.now() + 100,
               delegateRetainedFds,
               retainedSpawnOutputHandles,
               exitCode: null,
@@ -7037,6 +7036,11 @@ const hostProcessImport = {
             };
             spawnedChildren.set(pid, record);
             spawnedChildrenById.set(result.childId, record);
+            // The child is now addressable by retry-safe pipe delivery. Flush any
+            // bytes that arrived during spawn immediately; a transient ECHILD keeps
+            // the bytes queued for the next scheduler pass instead of imposing a
+            // fixed delay that can outlive a fast parent shell.
+            pumpChildInputPipe(record, 0);
             traceHostProcess('proc-spawn-ready', {
               command,
               childId: result.childId,
@@ -7055,8 +7059,14 @@ const hostProcessImport = {
             }
             return writeGuestUint32(retPidPtr, pid);
           } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            try {
+              process.stderr.write(`[agent-os] child spawn failed: ${message}\n`);
+            } catch {
+              // Preserve the original spawn errno when stderr itself is unavailable.
+            }
             traceHostProcess('proc-spawn-fault', {
-              message: error instanceof Error ? error.message : String(error),
+              message,
             });
             return mapHostProcessError(error);
           }
@@ -9775,6 +9785,34 @@ const hostFsImport = {
     }
   },
   path_mode(fd, pathPtr, pathLen, followSymlinks) {
+    const operand = kernelPathOperand(fd, pathPtr, pathLen);
+    if (operand) {
+      try {
+        const stat = callSyncRpc('process.path_stat_at', [
+          operand.dirFd,
+          operand.path,
+          Number(followSymlinks) !== 0,
+        ]);
+        const mode = Number(stat?.mode) >>> 0;
+        if (mode !== 0) {
+          traceHostProcess('host-fs-path-mode', {
+            target: operand.path,
+            followSymlinks: Number(followSymlinks) >>> 0,
+            mode,
+            source: 'kernel',
+          });
+          return mode;
+        }
+      } catch (error) {
+        // Host-only runtime mappings are not guaranteed to exist in the guest
+        // kernel. Preserve the existing host-stat fallback for those paths.
+        // A permission or integrity error must remain fail-closed instead of
+        // being bypassed by a direct host stat.
+        if (error?.code !== 'ENOENT' && error?.code !== 'ENOTDIR') {
+          return 0;
+        }
+      }
+    }
     try {
       const target = resolvePathOpenGuestPath(fd, pathPtr, pathLen);
       if (typeof target !== 'string') {
@@ -9794,6 +9832,7 @@ const hostFsImport = {
         hostPath,
         followSymlinks: Number(followSymlinks) >>> 0,
         mode,
+        source: 'host',
       });
       return mode;
     } catch {

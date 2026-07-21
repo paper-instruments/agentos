@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Internal AgentOS client for Rivet actor SQLite over Unix sockets"
+description = "Internal AgentOS client for Rivet actor SQLite over local IPC"
 
 [dependencies]
 anyhow = "1"

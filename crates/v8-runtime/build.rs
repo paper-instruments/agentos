@@ -137,6 +137,9 @@ fn build_v8_thread_support(manifest_dir: &Path, crate_root: &Path, out_dir: &Pat
     cc::Build::new()
         .cpp(true)
         .std("c++20")
+        // MSVC otherwise reports the legacy C++98 value through __cplusplus,
+        // which makes V8 reject the translation unit even with /std:c++20.
+        .flag_if_supported("/Zc:__cplusplus")
         .warnings(false)
         .include(overlay_include)
         .include(include)

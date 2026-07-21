@@ -9,6 +9,10 @@ pub(crate) mod chunked_actor_sqlite;
 pub(crate) mod chunked_local;
 pub(crate) mod chunked_s3;
 pub(crate) mod google_drive;
+#[cfg(unix)]
+pub(crate) mod host_dir;
+#[cfg(windows)]
+#[path = "host_dir_windows.rs"]
 pub(crate) mod host_dir;
 pub(crate) mod js_bridge;
 pub(crate) mod module_access;

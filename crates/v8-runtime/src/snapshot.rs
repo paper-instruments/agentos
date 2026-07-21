@@ -43,9 +43,18 @@ static SNAPSHOT_HELPER_CTOR: extern "C" fn() = snapshot_helper_ctor;
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 extern "C" fn snapshot_helper_ctor() {
+    exit_if_snapshot_helper_requested();
+}
+
+/// Handle the snapshot-helper subprocess before the embedding binary starts
+/// its normal control protocol.
+///
+/// ELF and Mach-O binaries invoke this through the constructors above. Windows
+/// has no equivalent Rust-supported pre-main constructor, so each sidecar main
+/// calls it explicitly as its first operation.
+pub fn exit_if_snapshot_helper_requested() {
     if std::env::var_os(SNAPSHOT_HELPER_ENV).is_some() {
-        let code = run_snapshot_helper_from_stdio();
-        std::process::exit(code);
+        std::process::exit(run_snapshot_helper_from_stdio());
     }
 }
 

@@ -24,9 +24,11 @@ use agentos_kernel::vfs::{
     normalize_path, VfsError, VfsResult, VirtualDirEntry, VirtualFileSystem, VirtualStat,
     VirtualTimeSpec, VirtualUtimeSpec,
 };
-use nix::sys::stat::{fchmod, fstat, fstatat, mkdirat, utimensat, Mode, SFlag, UtimensatFlags};
+use nix::sys::stat::{
+    fchmod, fstat, fstatat, futimens, mkdirat, utimensat, Mode, SFlag, UtimensatFlags,
+};
 use nix::sys::time::TimeSpec;
-use nix::unistd::{fchownat, linkat, symlinkat, unlinkat, Gid, Uid, UnlinkatFlags};
+use nix::unistd::{linkat, symlinkat, unlinkat, UnlinkatFlags};
 use serde::Deserialize;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
@@ -964,6 +966,18 @@ impl HostDirFilesystem {
         mtime: VirtualUtimeSpec,
         follow_symlinks: bool,
     ) -> VfsResult<()> {
+        let normalized = normalize_path(path);
+        if normalized == "/" {
+            let root = self.open_directory_beneath(Path::new("."))?;
+            let omitted = VirtualTimeSpec { sec: 0, nsec: 0 };
+            return futimens(
+                root.as_raw_fd(),
+                &Self::resolve_utime_timespec(atime, omitted),
+                &Self::resolve_utime_timespec(mtime, omitted),
+            )
+            .map_err(|error| io_error_to_vfs("utimes", &normalized, nix_to_io(error)));
+        }
+
         let (parent_dir, _, name, normalized) = self.split_parent(path, false)?;
         if follow_symlinks {
             // `utimes` (follow) rejects a symlink leaf, matching `chmod`/`chown`;
@@ -1005,6 +1019,18 @@ impl HostDirFilesystem {
         .map_err(|error| io_error_to_vfs("utimes", &normalized, nix_to_io(error)))
     }
 
+    fn virtual_mode(host_mode: u32, is_directory: bool, is_symlink: bool) -> u32 {
+        // POSIX reserves 0170000 for the file type. Using the stable wire-mode
+        // mask avoids nix exposing mode_t as u16 on macOS and u32 on Linux.
+        let file_type = host_mode & 0o170000;
+        let permissions = if is_symlink || is_directory {
+            0o777
+        } else {
+            0o666 | (host_mode & 0o111)
+        };
+        file_type | permissions
+    }
+
     fn stat_from_metadata(metadata: fs::Metadata) -> VirtualStat {
         let atime_ms = metadata.atime().max(0) as u64 * 1_000
             + (metadata.atime_nsec().max(0) as u64 / 1_000_000);
@@ -1016,7 +1042,11 @@ impl HostDirFilesystem {
             + (metadata.ctime_nsec().max(0) as u64 / 1_000_000);
         let ctime_nsec = metadata.ctime_nsec().clamp(0, 999_999_999) as u32;
         VirtualStat {
-            mode: metadata.mode(),
+            mode: Self::virtual_mode(
+                metadata.mode(),
+                metadata.is_dir(),
+                metadata.file_type().is_symlink(),
+            ),
             size: metadata.size(),
             blocks: metadata.blocks(),
             dev: metadata.dev(),
@@ -1032,8 +1062,12 @@ impl HostDirFilesystem {
             birthtime_ms: ctime_ms,
             ino: metadata.ino(),
             nlink: metadata.nlink(),
-            uid: metadata.uid(),
-            gid: metadata.gid(),
+            // A host mount is already capability-confined and its filesystem
+            // operations still run with the sidecar process's real OS access.
+            // Do not leak host uid/gid or let a host 0700 workspace become
+            // unusable to the virtual `agentos` user.
+            uid: 1000,
+            gid: 1000,
         }
     }
 
@@ -1053,7 +1087,11 @@ impl HostDirFilesystem {
         VirtualStat {
             // Widen for platform differences: mode_t/dev_t/nlink_t are narrower
             // on macOS (u16/i32/u16) than on Linux.
-            mode: stat.st_mode as u32,
+            mode: Self::virtual_mode(
+                stat.st_mode as u32,
+                file_type == SFlag::S_IFDIR,
+                file_type == SFlag::S_IFLNK,
+            ),
             size: stat.st_size as u64,
             blocks: stat.st_blocks as u64,
             dev: stat.st_dev as u64,
@@ -1070,8 +1108,8 @@ impl HostDirFilesystem {
             ino: stat.st_ino,
             // st_nlink is u64 on x86_64 but u32 on aarch64 / u16 on macOS; widen.
             nlink: stat.st_nlink as u64,
-            uid: stat.st_uid,
-            gid: stat.st_gid,
+            uid: 1000,
+            gid: 1000,
         }
     }
 
@@ -1428,23 +1466,12 @@ impl VirtualFileSystem for HostDirFilesystem {
             .map_err(|error| io_error_to_vfs("chmod", path, nix_to_io(error)))
     }
 
-    fn chown(&mut self, path: &str, uid: u32, gid: u32) -> VfsResult<()> {
-        // Parent-fd + `fchownat` (no leaf open → no read requirement). Reject a
-        // symlink leaf, then use `AT_SYMLINK_NOFOLLOW`: for the confirmed
-        // non-symlink leaf this is behaviourally a plain `chown`, and it also
-        // closes the check→mutate symlink-swap race (a leaf swapped to a symlink
-        // afterwards is `lchown`ed in place, staying confined, never followed to
-        // an escaped host path).
-        let (parent_dir, _, name, normalized) = self.split_parent(path, false)?;
-        self.reject_symlink_leaf(&parent_dir, name.as_os_str(), &normalized, "chown")?;
-        fchownat(
-            Some(parent_dir.as_raw_fd()),
-            name.as_os_str(),
-            Some(Uid::from_raw(uid)),
-            Some(Gid::from_raw(gid)),
-            AtFlags::AT_SYMLINK_NOFOLLOW,
-        )
-        .map_err(|error| VfsError::new(error_code(&error), error.to_string()))
+    fn chown(&mut self, path: &str, _uid: u32, _gid: u32) -> VfsResult<()> {
+        // Host uid/gid values are intentionally virtualized. Confirm that the
+        // capability-confined entry exists, then keep ownership unchanged on
+        // the host. This also lets normal guest file creation apply virtual
+        // ownership without requiring an elevated sidecar.
+        self.lstat(path).map(|_| ())
     }
 
     fn utimes(&mut self, path: &str, atime_ms: u64, mtime_ms: u64) -> VfsResult<()> {
@@ -1793,22 +1820,6 @@ fn io_error_to_vfs(op: &'static str, path: &str, error: io::Error) -> VfsError {
         },
     };
     VfsError::new(code, format!("{op} '{path}': {error}"))
-}
-
-fn error_code(error: &nix::Error) -> &'static str {
-    match error {
-        nix::Error::EACCES => "EACCES",
-        nix::Error::EEXIST => "EEXIST",
-        nix::Error::EINVAL => "EINVAL",
-        nix::Error::EISDIR => "EISDIR",
-        nix::Error::ELOOP => "ELOOP",
-        nix::Error::ENOENT => "ENOENT",
-        nix::Error::ENOTDIR => "ENOTDIR",
-        nix::Error::ENOTEMPTY => "ENOTEMPTY",
-        nix::Error::EPERM => "EPERM",
-        nix::Error::EROFS => "EROFS",
-        _ => "EIO",
-    }
 }
 
 fn lexical_normalize_path(path: &Path) -> PathBuf {

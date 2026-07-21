@@ -1700,11 +1700,14 @@ impl ActiveExecution {
             Self::Javascript(execution) => execution
                 .respond_sync_rpc_raw_success(id, payload)
                 .map_err(|error| SidecarError::Execution(error.to_string())),
+            Self::Python(execution) => execution
+                .respond_javascript_sync_rpc_raw_success(id, payload)
+                .map_err(|error| SidecarError::Execution(error.to_string())),
             Self::Wasm(execution) => execution
                 .respond_sync_rpc_raw_success(id, payload)
                 .map_err(|error| SidecarError::Execution(error.to_string())),
             _ => Err(SidecarError::InvalidState(String::from(
-                "only embedded V8 executions can service raw JavaScript sync RPC responses",
+                "only JavaScript, Python, and WebAssembly executions can service raw JavaScript sync RPC responses",
             ))),
         }
     }

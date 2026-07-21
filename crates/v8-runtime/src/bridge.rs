@@ -3,6 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
+#[cfg(not(windows))]
 use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::OnceLock;
@@ -771,6 +772,7 @@ struct ThreadResourceUsageSnapshot {
     involuntary_context_switches: i64,
 }
 
+#[cfg(not(windows))]
 fn non_negative_c_long(value: libc::c_long) -> i64 {
     let normalized = i128::from(value).max(0);
     normalized.min(i128::from(i64::MAX)) as i64
@@ -778,7 +780,7 @@ fn non_negative_c_long(value: libc::c_long) -> i64 {
 
 // Used only by the non-macOS `getrusage(RUSAGE_THREAD)` path; macOS reads CPU
 // time from Mach `time_value_t` instead.
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), not(windows)))]
 fn timeval_to_micros(value: libc::timeval) -> u64 {
     let seconds = i128::from(value.tv_sec).max(0);
     let micros = i128::from(value.tv_usec).max(0);
@@ -788,7 +790,7 @@ fn timeval_to_micros(value: libc::timeval) -> u64 {
         .min(i128::from(u64::MAX))) as u64
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), not(windows)))]
 fn current_thread_resource_usage() -> Result<ThreadResourceUsageSnapshot, String> {
     let mut usage = MaybeUninit::<libc::rusage>::uninit();
     let result = unsafe { libc::getrusage(libc::RUSAGE_THREAD, usage.as_mut_ptr()) };
@@ -816,6 +818,57 @@ fn current_thread_resource_usage() -> Result<ThreadResourceUsageSnapshot, String
         signals_count: non_negative_c_long(usage.ru_nsignals),
         voluntary_context_switches: non_negative_c_long(usage.ru_nvcsw),
         involuntary_context_switches: non_negative_c_long(usage.ru_nivcsw),
+    })
+}
+
+#[cfg(windows)]
+fn current_thread_resource_usage() -> Result<ThreadResourceUsageSnapshot, String> {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::{GetCurrentThread, GetThreadTimes};
+
+    let mut creation = FILETIME::default();
+    let mut exit = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    // SAFETY: GetCurrentThread returns a pseudo-handle valid for the calling
+    // thread, and every FILETIME out-pointer is valid for the duration of this
+    // call.
+    let result = unsafe {
+        GetThreadTimes(
+            GetCurrentThread(),
+            &mut creation,
+            &mut exit,
+            &mut kernel,
+            &mut user,
+        )
+    };
+    if result == 0 {
+        return Err(format!(
+            "GetThreadTimes failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let micros = |value: FILETIME| {
+        let ticks = (u64::from(value.dwHighDateTime) << 32) | u64::from(value.dwLowDateTime);
+        ticks / 10
+    };
+    Ok(ThreadResourceUsageSnapshot {
+        user_cpu_us: micros(user),
+        system_cpu_us: micros(kernel),
+        max_rss_kib: 0,
+        shared_memory_size: 0,
+        unshared_data_size: 0,
+        unshared_stack_size: 0,
+        minor_page_faults: 0,
+        major_page_faults: 0,
+        swapped_out: 0,
+        fs_read: 0,
+        fs_write: 0,
+        ipc_sent: 0,
+        ipc_received: 0,
+        signals_count: 0,
+        voluntary_context_switches: 0,
+        involuntary_context_switches: 0,
     })
 }
 

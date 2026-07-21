@@ -289,7 +289,7 @@ pub(super) enum RuntimeChildStatusObservation {
     NotWaitable,
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(super) fn runtime_child_exit_status(
     child_pid: u32,
 ) -> Result<RuntimeChildStatusObservation, SidecarError> {
@@ -381,6 +381,7 @@ pub(super) fn runtime_child_exit_status(
     }
 }
 
+#[cfg(unix)]
 pub(crate) fn signal_runtime_process(child_pid: u32, signal: i32) -> Result<(), SidecarError> {
     if child_pid == 0 {
         return Ok(());
@@ -405,6 +406,37 @@ pub(crate) fn signal_runtime_process(child_pid: u32, signal: i32) -> Result<(), 
         Err(error) => Err(SidecarError::Execution(format!(
             "failed to signal guest runtime process {child_pid}: {error}"
         ))),
+    }
+}
+
+#[cfg(windows)]
+pub(super) fn runtime_child_exit_status(
+    child_pid: u32,
+) -> Result<RuntimeChildStatusObservation, SidecarError> {
+    if child_pid == 0 {
+        Ok(RuntimeChildStatusObservation::Exited(
+            RuntimeChildExitStatus {
+                status: 0,
+                signal: None,
+                core_dumped: false,
+            },
+        ))
+    } else {
+        // AgentOS JavaScript, Python, and WASM runtimes are embedded. A
+        // non-zero OS child is not part of the supported Windows execution
+        // path, so never probe or signal an unrelated host PID.
+        Ok(RuntimeChildStatusObservation::NotWaitable)
+    }
+}
+
+#[cfg(windows)]
+pub(crate) fn signal_runtime_process(child_pid: u32, _signal: i32) -> Result<(), SidecarError> {
+    if child_pid == 0 {
+        Ok(())
+    } else {
+        Err(SidecarError::Execution(format!(
+            "host child process signaling is unsupported on Windows for pid {child_pid}"
+        )))
     }
 }
 

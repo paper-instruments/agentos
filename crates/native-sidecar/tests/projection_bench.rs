@@ -348,18 +348,28 @@ fn repack_package_tar_to_aospkg(source_tar: &Path, dest_aospkg: &Path) -> Durati
 /// disk I/O. Flushes first (a dirty page cannot be dropped), then advises
 /// DONTNEED over the whole file.
 fn evict_page_cache(path: &Path) {
-    use std::os::fd::AsRawFd;
     let file = fs::File::open(path)
         .unwrap_or_else(|e| panic!("open {} for cache eviction failed: {e}", path.display()));
     file.sync_all()
         .unwrap_or_else(|e| panic!("fsync {} before eviction failed: {e}", path.display()));
-    nix::fcntl::posix_fadvise(
-        file.as_raw_fd(),
-        0,
-        0,
-        nix::fcntl::PosixFadviseAdvice::POSIX_FADV_DONTNEED,
-    )
-    .unwrap_or_else(|e| panic!("posix_fadvise(DONTNEED) on {} failed: {e}", path.display()));
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "emscripten",
+        target_os = "fuchsia",
+        target_os = "redox",
+        target_os = "freebsd",
+    ))]
+    {
+        use std::os::fd::AsRawFd;
+        nix::fcntl::posix_fadvise(
+            file.as_raw_fd(),
+            0,
+            0,
+            nix::fcntl::PosixFadviseAdvice::POSIX_FADV_DONTNEED,
+        )
+        .unwrap_or_else(|e| panic!("posix_fadvise(DONTNEED) on {} failed: {e}", path.display()));
+    }
 }
 
 /// Walk the mounted tar filesystem and read every regular file's full content

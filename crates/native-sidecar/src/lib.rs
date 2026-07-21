@@ -15,12 +15,16 @@ pub(crate) mod json_rpc;
 pub mod limits;
 pub(crate) mod metadata;
 pub mod package_projection;
+pub(crate) mod platform_fs;
 pub(crate) mod plugins;
+#[cfg(windows)]
+pub(crate) mod posix;
 pub mod service;
 pub(crate) mod state;
 pub mod stdio;
 pub(crate) mod vm;
 pub mod vm_sqlite;
+pub use agentos_execution::exit_if_snapshot_helper_requested;
 pub use agentos_sidecar_protocol::{generated_protocol, protocol, wire};
 
 pub use extension::{

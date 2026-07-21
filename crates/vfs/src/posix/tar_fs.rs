@@ -23,20 +23,23 @@ const MAX_TAR_SYMLINKS: usize = 40;
 /// Read-only filesystem backed by the mount chunk of a `.aospkg` package.
 ///
 /// The package container is `header + manifest + mount index + mount.tar`.
-/// `TarFileSystem::open` decodes only the precomputed mount index and serves
-/// reads from the uncompressed `mount.tar` chunk at `mountBase + offset`.
+/// `TarFileSystem::open` decodes the package manifest plus the precomputed mount
+/// index and serves reads from the uncompressed `mount.tar` chunk at
+/// `mountBase + offset`.
 /// Extraction would create a duplicate host tree, thousands of physical inodes,
 /// and a cleanup problem before reading the same bytes again.
 ///
 /// File reads are an O(log n) index lookup plus a page-cache-backed memory
 /// slice; metadata and directory listings come from the in-memory index. The
 /// index must be pre-sorted by canonical path, and load performs a release-safe
-/// adjacent-order check before any binary-search-dependent path can run. The
-/// mmap is keyed by file identity and shared across VMs, so RSS follows the
+/// adjacent-order check before any binary-search-dependent path can run. A
+/// manifest command entry always has guest execute bits, even when a Windows
+/// packer cannot preserve POSIX mode metadata. The mmap is keyed by file
+/// identity and shared across VMs, so RSS follows the
 /// pages actually touched rather than the full archive size. This open path is
-/// on VM startup (`configure_vm`), so it must stay O(index decode): never parse
-/// tar headers, read/hash the whole archive, or recover metadata from legacy
-/// in-archive JSON here.
+/// on VM startup (`configure_vm`), so it must stay O(manifest + index decode):
+/// never parse tar headers, read/hash the whole archive, or recover metadata
+/// from legacy in-archive JSON here.
 ///
 /// This filesystem is mounted only as a granular package-version leaf such as
 /// `/opt/agentos/pkgs/<pkg>/<version>`. Managed commands and `current` aliases
@@ -582,6 +585,20 @@ fn load_archive(path: PathBuf, file: File, identity: FileIdentity) -> VfsResult<
     .map_err(io_to_vfs)?;
 
     let container = parse_aospkg_header(&mmap)?;
+    let manifest = crate::package_format::versioned::decode_package_manifest(
+        &mmap[container.manifest.clone()],
+    )
+    .map_err(|error| {
+        VfsError::new(
+            "EINVAL",
+            format!("decode .aospkg package manifest: {error}"),
+        )
+    })?;
+    let executable_paths = manifest
+        .commands
+        .iter()
+        .filter_map(|target| canonical_command_entry_path(&target.entry))
+        .collect::<BTreeSet<_>>();
     let index =
         crate::package_format::versioned::decode_mount_index(&mmap[container.index.clone()])
             .map_err(|error| {
@@ -615,11 +632,16 @@ fn load_archive(path: PathBuf, file: File, identity: FileIdentity) -> VfsResult<
             .map_err(|_| VfsError::new("EINVAL", format!("negative mtime for {path}")))?
             .checked_mul(1_000)
             .ok_or_else(|| VfsError::new("EOVERFLOW", format!("mtime overflows ms for {path}")))?;
+        let mode = if matches!(entry.kind, TarEntryKind::File) && executable_paths.contains(&path) {
+            entry.mode | 0o111
+        } else {
+            entry.mode
+        };
         nodes.insert(
             path.clone(),
             TarNode {
                 kind,
-                mode: entry.mode,
+                mode,
                 uid: entry.uid,
                 gid: entry.gid,
                 mtime_ms,
@@ -645,6 +667,19 @@ fn load_archive(path: PathBuf, file: File, identity: FileIdentity) -> VfsResult<
         nodes,
         children,
     })
+}
+
+fn canonical_command_entry_path(entry: &str) -> Option<String> {
+    let entry = entry.strip_prefix("./").unwrap_or(entry);
+    if entry.is_empty()
+        || entry.starts_with('/')
+        || entry
+            .split('/')
+            .any(|component| component.is_empty() || matches!(component, "." | ".."))
+    {
+        return None;
+    }
+    Some(format!("/{entry}"))
 }
 
 fn add_child(path: &str, children: &mut BTreeMap<String, BTreeSet<String>>) {

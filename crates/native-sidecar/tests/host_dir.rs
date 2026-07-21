@@ -74,6 +74,18 @@ mod host_dir {
         }
 
         #[test]
+        fn filesystem_updates_mount_root_times() {
+            let host_dir = temp_dir("secure-exec-host-dir-plugin-root-times");
+            let mut filesystem = HostDirFilesystem::new(&host_dir).expect("create host dir fs");
+
+            filesystem
+                .utimes("/", 1_000, 2_000)
+                .expect("update mount root times through its directory handle");
+
+            fs::remove_dir_all(host_dir).expect("remove temp dir");
+        }
+
+        #[test]
         fn filesystem_pwrite_updates_in_place_and_zero_fills_gaps() {
             let host_dir = temp_dir("secure-exec-host-dir-plugin-pwrite");
             fs::write(host_dir.join("data.txt"), b"abcdef").expect("seed host file");

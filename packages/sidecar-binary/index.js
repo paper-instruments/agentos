@@ -14,7 +14,9 @@
 const { existsSync } = require("node:fs");
 const { join, dirname } = require("node:path");
 
-const BINARY_NAME = "agentos-sidecar";
+const BINARY_BASENAME = "agentos-sidecar";
+const BINARY_NAME =
+	process.platform === "win32" ? `${BINARY_BASENAME}.exe` : BINARY_BASENAME;
 
 // No runtime chmod: the platform packages are published with `npm publish`,
 // which preserves the binary's 0755 executable bit (pnpm publish would strip
@@ -31,6 +33,9 @@ function getPlatformPackageName() {
 		case "darwin":
 			if (arch === "x64") return "@rivet-dev/agentos-sidecar-darwin-x64";
 			if (arch === "arm64") return "@rivet-dev/agentos-sidecar-darwin-arm64";
+			break;
+		case "win32":
+			if (arch === "x64") return "@rivet-dev/agentos-sidecar-windows-x64";
 			break;
 		default:
 			break;
@@ -65,7 +70,7 @@ function getSidecarPath() {
 	if (!platformPkg) {
 		throw new Error(
 			`@rivet-dev/agentos-sidecar: unsupported platform ${process.platform}/${process.arch}. ` +
-				"The Agent OS sidecar currently supports linux and darwin on x64 and arm64. " +
+				"The Agent OS sidecar supports linux and macOS on x64/arm64, and Windows on x64. " +
 				"Set AGENTOS_SIDECAR_BIN to a local agentos-sidecar binary to override.",
 		);
 	}

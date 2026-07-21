@@ -1263,6 +1263,7 @@ fn process_response_to_vfs(
 }
 
 fn errno_to_vfs_code(errno: i32) -> &'static str {
+    #[cfg(unix)]
     match errno {
         nix::libc::EACCES => "EACCES",
         nix::libc::EEXIST => "EEXIST",
@@ -1275,6 +1276,21 @@ fn errno_to_vfs_code(errno: i32) -> &'static str {
         nix::libc::ENOTEMPTY => "ENOTEMPTY",
         nix::libc::EPERM => "EPERM",
         nix::libc::EXDEV => "EXDEV",
+        _ => "EIO",
+    }
+    #[cfg(windows)]
+    match errno {
+        13 => "EACCES",
+        17 => "EEXIST",
+        22 => "EINVAL",
+        21 => "EISDIR",
+        40 => "ELOOP",
+        2 => "ENOENT",
+        38 => "ENOSYS",
+        20 => "ENOTDIR",
+        39 => "ENOTEMPTY",
+        1 => "EPERM",
+        18 => "EXDEV",
         _ => "EIO",
     }
 }

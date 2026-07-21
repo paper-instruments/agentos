@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -132,7 +133,7 @@ impl VmSqliteDescriptor {
 }
 
 fn validate_absolute_host_path(field: &str, path: &str) -> Result<(), VmConfigError> {
-    if path.is_empty() || !path.starts_with('/') || path.as_bytes().contains(&0) {
+    if path.is_empty() || !Path::new(path).is_absolute() || path.as_bytes().contains(&0) {
         return Err(VmConfigError::new(format!(
             "{field} must be a non-empty absolute path without NUL bytes"
         )));
@@ -1398,6 +1399,16 @@ mod tests {
             serde_json::from_str::<CreateVmConfig>(r#"{"rootFilesystem":{},"surprise":true}"#)
                 .expect_err("unknown fields should fail");
         assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn host_paths_use_platform_absolute_path_semantics() {
+        let absolute = std::env::temp_dir().join("agentos-vm.sqlite");
+        validate_absolute_host_path("database.path", absolute.to_string_lossy().as_ref())
+            .expect("host-native absolute path should validate");
+        assert!(validate_absolute_host_path("database.path", "relative/vm.sqlite").is_err());
+        assert!(validate_absolute_host_path("database.path", "").is_err());
+        assert!(validate_absolute_host_path("database.path", "bad\0path").is_err());
     }
 
     #[test]

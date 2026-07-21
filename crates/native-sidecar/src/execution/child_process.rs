@@ -3163,6 +3163,12 @@ where
                         normalize_path(&format!("{parent_guest_cwd}/{relative}"))
                     };
                     (guest_cwd, Some(requested_host_cwd))
+                } else if cwd.starts_with('/') {
+                    // Guest cwd values are POSIX paths on every host. Rust's
+                    // Windows path parser treats a drive-less `/workspace` as
+                    // relative, so check the guest syntax before applying
+                    // host-relative path rules.
+                    (normalize_path(cwd), None)
                 } else if Path::new(cwd).is_relative() {
                     (
                         normalize_path(&format!("{parent_guest_cwd}/{cwd}")),

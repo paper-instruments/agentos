@@ -20,7 +20,7 @@ concurrency:
 env:
   R2_BUCKET: rivet-releases
   R2_ENDPOINT: https://2a94c6a0ced8d35ea63cddc86c2681e7.r2.cloudflarestorage.com
-  SIDECAR_PLATFORMS: "linux-x64-gnu linux-arm64-gnu darwin-x64 darwin-arm64"
+  SIDECAR_PLATFORMS: "linux-x64-gnu linux-arm64-gnu darwin-x64 darwin-arm64 windows-x64"
   RUST_TOOLCHAIN: "1.91.1"
   LINUX_GNU_LLVM_VERSION: "22"
   LINUX_GNU_SYSROOT_TAG: "sysroot-20250207"
@@ -61,8 +61,9 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2026-03-01
           targets: wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
         with:
@@ -220,10 +221,46 @@ jobs:
           path: target/sidecar-artifacts/${{ matrix.platform }}
           if-no-files-found: error
 
+  build-sidecar-windows:
+    needs: [context]
+    name: Build Windows binaries (windows-x64)
+    runs-on: windows-latest
+    env:
+      AGENTOS_SKIP_NATIVE_META_BUILD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-release-sidecars-${{ hashFiles('Cargo.lock') }}
+      - run: pnpm install --frozen-lockfile
+      - name: Build Windows sidecars
+        shell: pwsh
+        run: |
+          $profile = if ("${{ needs.context.outputs.trigger }}" -eq "release") { "release" } else { "debug" }
+          $cargoArgs = @("build", "-p", "agentos-sidecar", "-p", "agentos-native-sidecar")
+          if ($profile -eq "release") { $cargoArgs += "--release" }
+          cargo @cargoArgs
+          $out = "target/sidecar-artifacts/windows-x64"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item "target/$profile/agentos-sidecar.exe" "$out/agentos-sidecar.exe"
+          Copy-Item "target/$profile/agentos-native-sidecar.exe" "$out/agentos-native-sidecar.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sidecar-windows-x64
+          path: target/sidecar-artifacts/windows-x64
+          if-no-files-found: error
+
   publish-npm:
-    needs: [context, wasm-commands, build-sidecar, build-sidecar-darwin]
+    needs: [context, wasm-commands, build-sidecar, build-sidecar-darwin, build-sidecar-windows]
     name: Publish npm
-    if: ${{ !cancelled() && needs.wasm-commands.result == 'success' && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' }}
+    if: ${{ !cancelled() && needs.wasm-commands.result == 'success' && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' && needs.build-sidecar-windows.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -247,18 +284,20 @@ jobs:
         run: |
           set -euo pipefail
           for p in $SIDECAR_PLATFORMS; do
-            agent_bin="artifacts/sidecar-${p}/agentos-sidecar"
-            runtime_bin="artifacts/sidecar-${p}/agentos-native-sidecar"
+            suffix=""
+            if [ "$p" = "windows-x64" ]; then suffix=".exe"; fi
+            agent_bin="artifacts/sidecar-${p}/agentos-sidecar${suffix}"
+            runtime_bin="artifacts/sidecar-${p}/agentos-native-sidecar${suffix}"
             agent_dest="packages/sidecar-binary/npm/${p}"
             runtime_dest="packages/runtime-sidecar/npm/${p}"
             test -f "$agent_bin"
             test -f "$runtime_bin"
             test -d "$agent_dest"
             test -d "$runtime_dest"
-            cp "$agent_bin" "${agent_dest}/agentos-sidecar"
-            chmod +x "${agent_dest}/agentos-sidecar"
-            cp "$runtime_bin" "${runtime_dest}/agentos-native-sidecar"
-            chmod +x "${runtime_dest}/agentos-native-sidecar"
+            cp "$agent_bin" "${agent_dest}/agentos-sidecar${suffix}"
+            chmod +x "${agent_dest}/agentos-sidecar${suffix}"
+            cp "$runtime_bin" "${runtime_dest}/agentos-native-sidecar${suffix}"
+            chmod +x "${runtime_dest}/agentos-native-sidecar${suffix}"
           done
       - name: Bump package versions for build
         run: |
@@ -293,9 +332,9 @@ jobs:
             ${{ needs.context.outputs.trigger == 'release' && '--release-mode' || '' }}
 
   release-assets:
-    needs: [context, build-sidecar, build-sidecar-darwin]
+    needs: [context, build-sidecar, build-sidecar-darwin, build-sidecar-windows]
     name: Release assets
-    if: ${{ !cancelled() && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' }}
+    if: ${{ !cancelled() && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' && needs.build-sidecar-windows.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -324,12 +363,15 @@ jobs:
             [linux-arm64-gnu]=aarch64-unknown-linux-gnu
             [darwin-x64]=x86_64-apple-darwin
             [darwin-arm64]=aarch64-apple-darwin
+            [windows-x64]=x86_64-pc-windows-msvc
           )
           mkdir -p release-assets
           for p in $SIDECAR_PLATFORMS; do
             target="${PLATFORM_TARGET[$p]}"
-            cp "artifacts/sidecar-${p}/agentos-sidecar" "release-assets/agentos-sidecar-${target}"
-            cp "artifacts/sidecar-${p}/agentos-native-sidecar" "release-assets/agentos-native-sidecar-${target}"
+            suffix=""
+            if [ "$p" = "windows-x64" ]; then suffix=".exe"; fi
+            cp "artifacts/sidecar-${p}/agentos-sidecar${suffix}" "release-assets/agentos-sidecar-${target}${suffix}"
+            cp "artifacts/sidecar-${p}/agentos-native-sidecar${suffix}" "release-assets/agentos-native-sidecar-${target}${suffix}"
           done
           chmod +x release-assets/agentos-sidecar-* release-assets/agentos-native-sidecar-*
           if [ -d crates/execution/assets/pyodide ]; then

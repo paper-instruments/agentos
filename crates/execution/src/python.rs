@@ -6,8 +6,8 @@ use crate::javascript::{
 };
 use crate::node_import_cache::{NodeImportCache, NODE_IMPORT_CACHE_ASSET_ROOT_ENV};
 use crate::runtime_support::{
-    env_flag_enabled, file_fingerprint, resolve_execution_path, warmup_marker_path,
-    NODE_DISABLE_COMPILE_CACHE_ENV, NODE_FROZEN_TIME_ENV,
+    env_flag_enabled, file_fingerprint, host_stat_value, resolve_execution_path,
+    warmup_marker_path, NODE_DISABLE_COMPILE_CACHE_ENV, NODE_FROZEN_TIME_ENV,
 };
 use crate::v8_runtime;
 use agentos_runtime::RuntimeContext;
@@ -18,7 +18,6 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
-use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -37,6 +36,8 @@ const PYTHON_PREWARM_ONLY_ENV: &str = "AGENTOS_PYTHON_PREWARM_ONLY";
 const PYTHON_WARMUP_DEBUG_ENV: &str = "AGENTOS_PYTHON_WARMUP_DEBUG";
 const PYTHON_WARMUP_METRICS_PREFIX: &str = "__AGENTOS_PYTHON_WARMUP_METRICS__:";
 const PYTHON_WARMUP_MARKER_VERSION: &str = "2";
+const PYTHON_RUNTIME_ENV_NAMES: &[&str] =
+    &["HOME", "USER", "LOGNAME", "SHELL", "PWD", "TMPDIR", "PATH"];
 const DEFAULT_PYTHON_OUTPUT_BUFFER_MAX_BYTES: usize = 1024 * 1024;
 const DEFAULT_PYTHON_EXECUTION_TIMEOUT_MS: u64 = 5 * 60 * 1000;
 const DEFAULT_PYTHON_MAX_OLD_SPACE_MB: usize = 0;
@@ -581,6 +582,16 @@ impl PythonExecution {
     ) -> Result<(), PythonExecutionError> {
         self.inner
             .respond_sync_rpc_success(id, result)
+            .map_err(map_javascript_error)
+    }
+
+    pub fn respond_javascript_sync_rpc_raw_success(
+        &mut self,
+        id: u64,
+        payload: Vec<u8>,
+    ) -> Result<(), PythonExecutionError> {
+        self.inner
+            .respond_sync_rpc_raw_success(id, payload)
             .map_err(map_javascript_error)
     }
 
@@ -1520,6 +1531,11 @@ fn build_python_internal_env(
         .filter(|(key, _)| key.starts_with("AGENTOS_"))
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect::<BTreeMap<_, _>>();
+    for name in PYTHON_RUNTIME_ENV_NAMES {
+        if let Some(value) = request.env.get(*name) {
+            internal_env.insert((*name).to_owned(), value.clone());
+        }
+    }
     let pyodide_dist_path = resolved_pyodide_dist_path(&context.pyodide_dist_path, &request.cwd);
 
     add_python_guest_path_mapping(&mut internal_env, &pyodide_dist_path);
@@ -2654,23 +2670,7 @@ fn python_host_path_to_guest(pyodide_dist_path: &Path, host_path: &Path) -> Opti
 }
 
 fn python_host_stat_value(metadata: &fs::Metadata) -> Value {
-    json!({
-        "mode": metadata.mode(),
-        "size": metadata.size(),
-        "blocks": metadata.blocks(),
-        "dev": metadata.dev(),
-        "rdev": metadata.rdev(),
-        "isDirectory": metadata.is_dir(),
-        "isSymbolicLink": metadata.file_type().is_symlink(),
-        "atimeMs": metadata.atime() * 1000 + (metadata.atime_nsec() / 1_000_000),
-        "mtimeMs": metadata.mtime() * 1000 + (metadata.mtime_nsec() / 1_000_000),
-        "ctimeMs": metadata.ctime() * 1000 + (metadata.ctime_nsec() / 1_000_000),
-        "birthtimeMs": metadata.ctime() * 1000 + (metadata.ctime_nsec() / 1_000_000),
-        "ino": metadata.ino(),
-        "nlink": metadata.nlink(),
-        "uid": metadata.uid(),
-        "gid": metadata.gid(),
-    })
+    host_stat_value(metadata)
 }
 
 fn python_readdir_value(entries: Vec<String>) -> Value {
@@ -2825,14 +2825,17 @@ fn warmup_metrics_line(
 #[cfg(test)]
 mod tests {
     use super::{
-        clear_pending_vfs_rpc, python_javascript_sync_rpc_action, python_managed_path_kind,
-        python_runner_javascript_limits, python_wait_remaining, CreatePythonContextRequest,
-        JavascriptSyncRpcRequest, PendingVfsRpc, PendingVfsRpcResolution, PendingVfsRpcState,
-        PythonExecutionEngine, PythonExecutionLimits, PythonJavascriptSyncRpcAction,
-        PythonManagedHostFiles, PythonManagedPathKind, PYODIDE_CACHE_GUEST_ROOT,
-        PYODIDE_GUEST_ROOT,
+        build_python_internal_env, clear_pending_vfs_rpc, python_javascript_sync_rpc_action,
+        python_managed_path_kind, python_runner_javascript_limits, python_wait_remaining,
+        CreatePythonContextRequest, JavascriptSyncRpcRequest, PendingVfsRpc,
+        PendingVfsRpcResolution, PendingVfsRpcState, PythonContext, PythonExecutionEngine,
+        PythonExecutionLimits, PythonJavascriptSyncRpcAction, PythonManagedHostFiles,
+        PythonManagedPathKind, StartPythonExecutionRequest, PYODIDE_CACHE_GUEST_ROOT,
+        PYODIDE_GUEST_ROOT, PYTHON_RUNTIME_ENV_NAMES,
     };
-    use std::collections::HashMap;
+    use crate::javascript::GuestRuntimeConfig;
+    use crate::node_import_cache::NodeImportCache;
+    use std::collections::{BTreeMap, HashMap};
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::symlink;
@@ -2852,6 +2855,44 @@ mod tests {
         assert_eq!(javascript.v8_heap_limit_mb, Some(256));
         assert_eq!(javascript.reactor_work_quantum, Some(23));
         assert_eq!(javascript.bridge_call_timeout_ms, Some(54_321));
+    }
+
+    #[test]
+    fn python_runner_internal_env_preserves_guest_runtime_env() {
+        let temp = tempdir().expect("create temp dir");
+        let runtime_env = BTreeMap::from([
+            (String::from("HOME"), String::from("/home/agent")),
+            (String::from("USER"), String::from("agent")),
+            (String::from("LOGNAME"), String::from("agent")),
+            (String::from("SHELL"), String::from("/bin/bash")),
+            (String::from("PWD"), String::from("/workspace")),
+            (String::from("TMPDIR"), String::from("/tmp")),
+            (String::from("PATH"), String::from("/bin:/usr/bin")),
+            (String::from("IGNORED"), String::from("host-value")),
+        ]);
+        let context = PythonContext {
+            context_id: String::from("python-context"),
+            vm_id: String::from("python-vm"),
+            pyodide_dist_path: temp.path().join("pyodide"),
+        };
+        let request = StartPythonExecutionRequest {
+            vm_id: context.vm_id.clone(),
+            context_id: context.context_id.clone(),
+            code: String::from("pass"),
+            file_path: None,
+            env: runtime_env.clone(),
+            cwd: temp.path().join("workspace"),
+            limits: PythonExecutionLimits::default(),
+            guest_runtime: GuestRuntimeConfig::default(),
+        };
+
+        let internal =
+            build_python_internal_env(&NodeImportCache::default(), &context, &request, 0, false);
+
+        for name in PYTHON_RUNTIME_ENV_NAMES {
+            assert_eq!(internal.get(*name), runtime_env.get(*name), "{name}");
+        }
+        assert!(!internal.contains_key("IGNORED"));
     }
 
     #[test]
