@@ -139,12 +139,12 @@ describe("host_dir native mount integration", () => {
 			"bash",
 			[
 				"-lc",
-				"set -euo pipefail; export AGENTOS_TRACE_HOST_PROCESS=1; grep beta direct-input.txt > direct-output.txt; printf 'alpha\\nbeta\\n' | grep beta | sed 's/beta/BETA/' > result.txt; for value in 1 2 3; do printf '%s' \"$value\"; done",
+				"set -euo pipefail; export AGENTOS_TEST_TRACE_HOST_PROCESS=1; grep beta direct-input.txt > direct-output.txt; printf 'alpha\\nbeta\\n' | grep beta | sed 's/beta/BETA/' > result.txt; for value in 1 2 3; do printf '%s' \"$value\"; done",
 			],
 			{
 				cwd: "/hostmnt",
 				env: {
-					AGENTOS_TRACE_HOST_PROCESS: "1",
+					AGENTOS_TEST_TRACE_HOST_PROCESS: "1",
 					HOME: "/hostmnt",
 					PWD: "/hostmnt",
 				},

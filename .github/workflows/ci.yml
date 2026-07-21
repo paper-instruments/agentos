@@ -156,23 +156,39 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        id: wasm-command-cache
+        with:
+          path: packages/runtime-core/commands
+          key: >-
+            wasm-command-bundle-v1-${{ hashFiles(
+              'toolchain/**',
+              'packages/runtime-core/scripts/copy-wasm-commands.mjs'
+            ) }}
       - uses: pnpm/action-setup@v4
+        if: steps.wasm-command-cache.outputs.cache-hit != 'true'
       - uses: actions/setup-node@v4
+        if: steps.wasm-command-cache.outputs.cache-hit != 'true'
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - uses: dtolnay/rust-toolchain@master
+        if: steps.wasm-command-cache.outputs.cache-hit != 'true'
         with:
           toolchain: nightly-2026-03-01
           targets: wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
+        if: steps.wasm-command-cache.outputs.cache-hit != 'true'
         with:
           workspaces: toolchain -> target
           key: wasm-commands-${{ hashFiles('toolchain/Cargo.lock') }}
-      - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-runtime-core...'
-      - run: make -C toolchain pr-commands
-      - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require-coreutils
+      - if: steps.wasm-command-cache.outputs.cache-hit != 'true'
+        run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-runtime-core...'
+      - if: steps.wasm-command-cache.outputs.cache-hit != 'true'
+        run: make -C toolchain pr-commands
+      - if: steps.wasm-command-cache.outputs.cache-hit != 'true'
+        run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require-coreutils
       - uses: actions/upload-artifact@v4
         with:
           name: wasm-commands
