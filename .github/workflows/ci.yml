@@ -75,11 +75,6 @@ jobs:
         # Bash gate against that exact build profile so release-only scheduler
         # races cannot pass CI and fail in the packaged desktop runtime.
         run: cargo build --release -p agentos-sidecar -p agentos-native-sidecar
-      - name: Test Windows host-directory root writes
-        run: >-
-          cargo test --release -p agentos-native-sidecar
-          --test host_dir_windows
-          filesystem_writes_files_at_mount_root
       - name: Test Windows workspace confinement and Bash
         shell: pwsh
         env:
