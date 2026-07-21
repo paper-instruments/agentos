@@ -175,7 +175,6 @@ describe("host_dir native mount integration", () => {
 			{
 				cwd: "/hostmnt",
 				env: {
-					AGENTOS_TRACE_HOST_PROCESS: "1",
 					HOME: "/hostmnt",
 					PWD: "/hostmnt",
 				},

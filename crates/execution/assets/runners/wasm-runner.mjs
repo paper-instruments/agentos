@@ -7059,8 +7059,14 @@ const hostProcessImport = {
             }
             return writeGuestUint32(retPidPtr, pid);
           } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            try {
+              process.stderr.write(`[agent-os] child spawn failed: ${message}\n`);
+            } catch {
+              // Preserve the original spawn errno when stderr itself is unavailable.
+            }
             traceHostProcess('proc-spawn-fault', {
-              message: error instanceof Error ? error.message : String(error),
+              message,
             });
             return mapHostProcessError(error);
           }
