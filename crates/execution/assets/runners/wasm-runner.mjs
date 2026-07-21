@@ -3085,7 +3085,14 @@ function releaseFdHandle(handle) {
     handle.pipe.readHandleCount = Math.max(0, handle.pipe.readHandleCount - 1);
   } else if (handle.kind === 'pipe-write') {
     handle.pipe.writeHandleCount = Math.max(0, handle.pipe.writeHandleCount - 1);
-    if (handle.pipe.writeHandleCount === 0 && (handle.pipe.producers?.size ?? 0) === 0) {
+    // A fast producer can exit before a freshly spawned Windows consumer is
+    // ready to accept stdin. Keep that consumer open while queued bytes remain;
+    // pumpChildInputPipe flushes them and then delivers EOF in order.
+    if (
+      handle.pipe.writeHandleCount === 0 &&
+      (handle.pipe.producers?.size ?? 0) === 0 &&
+      (handle.pipe.chunks?.length ?? 0) === 0
+    ) {
       closePipeConsumers(handle.pipe);
     }
   }
@@ -3547,7 +3554,14 @@ function unregisterPipeProducer(pipe, producerKey) {
     return;
   }
   pipe.producers.delete(producerKey);
-  if (pipe.producers.size === 0 && (pipe.writeHandleCount ?? 0) === 0) {
+  // Do not turn the producer's exit into EOF until every byte already queued
+  // for a not-yet-ready consumer has been delivered. The consumer pump owns
+  // the final flush-and-close transition.
+  if (
+    pipe.producers.size === 0 &&
+    (pipe.writeHandleCount ?? 0) === 0 &&
+    pipe.chunks.length === 0
+  ) {
     closePipeConsumers(pipe);
   }
   collectInactivePipeHandles(pipe);
