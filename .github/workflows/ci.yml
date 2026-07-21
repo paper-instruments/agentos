@@ -71,12 +71,15 @@ jobs:
           pnpm --filter @agentos-software/sed exec tsc
           pnpm --filter @agentos-software/sed exec agentos-toolchain build
       - name: Build Windows sidecars
-        run: cargo build -p agentos-sidecar -p agentos-native-sidecar
+        # Feather ships the optimized sidecar. Run the Windows confinement and
+        # Bash gate against that exact build profile so release-only scheduler
+        # races cannot pass CI and fail in the packaged desktop runtime.
+        run: cargo build --release -p agentos-sidecar -p agentos-native-sidecar
       - name: Test Windows workspace confinement and Bash
         shell: pwsh
         env:
-          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-sidecar.exe
-          AGENTOS_NATIVE_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-native-sidecar.exe
+          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/release/agentos-sidecar.exe
+          AGENTOS_NATIVE_SIDECAR_BIN: ${{ github.workspace }}/target/release/agentos-native-sidecar.exe
         run: >-
           pnpm --filter @rivet-dev/agentos-core exec vitest run
           tests/host-dir-backend.nightly.test.ts
