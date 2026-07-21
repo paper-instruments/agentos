@@ -69,6 +69,10 @@ const DEFAULT_MAX_PROCESS_HTTP2_EVENT_BYTES: usize = 512 * 1024 * 1024;
 const DEFAULT_TASK_POLL_WATCHDOG_MS: u64 = 100;
 const DEFAULT_MAX_TERMINAL_TASK_REPORTS: usize = 4_096;
 const DEFAULT_VM_EXECUTOR_TEARDOWN_TIMEOUT_MS: u64 = 5_000;
+// One V8 executor is occupied by the shell itself while every live external
+// pipeline stage needs another. CPU-count-only admission deadlocks ordinary
+// POSIX pipelines on one- and two-core hosts, so retain a small bounded floor.
+const DEFAULT_MIN_ACTIVE_VM_EXECUTORS: usize = 8;
 pub const DEFAULT_PROTOCOL_MAX_INGRESS_FRAMES: usize = 128;
 pub const DEFAULT_PROTOCOL_MAX_INGRESS_BYTES: usize = 64 * 1024 * 1024;
 pub const DEFAULT_PROTOCOL_MAX_CONTROL_FRAMES: usize = 1_024;
@@ -438,7 +442,7 @@ impl Default for RuntimeConfig {
             .unwrap_or(1);
         Self {
             worker_threads: available.clamp(1, 4),
-            max_active_vm_executors: available.max(1),
+            max_active_vm_executors: available.max(DEFAULT_MIN_ACTIVE_VM_EXECUTORS),
             vm_executor_teardown_timeout_ms: DEFAULT_VM_EXECUTOR_TEARDOWN_TIMEOUT_MS,
             blocking_worker_threads: available.clamp(1, 4),
             max_blocking_jobs: DEFAULT_MAX_BLOCKING_JOBS,
@@ -1610,6 +1614,13 @@ mod tests {
                 resource.name()
             );
         }
+    }
+
+    #[test]
+    fn default_executor_capacity_supports_posix_pipelines_on_low_core_hosts() {
+        assert!(
+            RuntimeConfig::default().max_active_vm_executors >= DEFAULT_MIN_ACTIVE_VM_EXECUTORS
+        );
     }
 
     #[test]
