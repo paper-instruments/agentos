@@ -143,7 +143,11 @@ describe("host_dir native mount integration", () => {
 			],
 			{
 				cwd: "/hostmnt",
-				env: { HOME: "/hostmnt", PWD: "/hostmnt" },
+				env: {
+					AGENTOS_TRACE_HOST_PROCESS: "1",
+					HOME: "/hostmnt",
+					PWD: "/hostmnt",
+				},
 				stdio: "pipe",
 			},
 		);
@@ -180,6 +184,7 @@ describe("host_dir native mount integration", () => {
 			"utf8",
 		);
 		if (directHostAtExit !== "beta\n" || pipelineHostAtExit !== "BETA\n") {
+			console.error("bash stderr", stderr);
 			console.error(
 				"redirect diagnostics",
 				JSON.stringify({
