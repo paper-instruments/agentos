@@ -4295,20 +4295,6 @@ function pumpChildInputPipe(record, waitMs) {
   }
   record.pumpingInputPipe = true;
   try {
-    const stdinReadyAt = Number(record?.stdinReadyAtMs) || 0;
-    if (stdinReadyAt > Date.now()) {
-      traceHostProcess('pump-child-input-deferred', {
-        childId: record?.childId ?? null,
-        waitMs: Number(waitMs) >>> 0,
-        stdinReadyAt,
-        now: Date.now(),
-        chunkCount: inputPipe.chunks.length,
-        writeHandleCount: inputPipe.writeHandleCount ?? null,
-        producerCount: inputPipe.producers?.size ?? null,
-      });
-      return false;
-    }
-
     let progressed = false;
     traceHostProcess('pump-child-input-begin', {
       childId: record?.childId ?? null,
@@ -7040,7 +7026,6 @@ const hostProcessImport = {
               stdinPipe,
               stdoutPipe,
               stderrPipe,
-              stdinReadyAtMs: Date.now() + 100,
               delegateRetainedFds,
               retainedSpawnOutputHandles,
               exitCode: null,
@@ -7051,6 +7036,11 @@ const hostProcessImport = {
             };
             spawnedChildren.set(pid, record);
             spawnedChildrenById.set(result.childId, record);
+            // The child is now addressable by retry-safe pipe delivery. Flush any
+            // bytes that arrived during spawn immediately; a transient ECHILD keeps
+            // the bytes queued for the next scheduler pass instead of imposing a
+            // fixed delay that can outlive a fast parent shell.
+            pumpChildInputPipe(record, 0);
             traceHostProcess('proc-spawn-ready', {
               command,
               childId: result.childId,
