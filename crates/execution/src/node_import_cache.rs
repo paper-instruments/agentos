@@ -4038,6 +4038,52 @@ export async function loadPyodide(options) {
     }
 
     #[test]
+    fn materialized_python_runner_applies_guest_working_directory() {
+        assert_node_available();
+
+        let import_cache = NodeImportCache::default();
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        let pyodide_dir = tempdir().expect("create pyodide fixture dir");
+        write_fixture(
+            &pyodide_dir.path().join("pyodide.mjs"),
+            r#"
+export async function loadPyodide(options) {
+  return {
+    FS: {
+      chdir(path) {
+        options.stdout(`cwd:${path}`);
+      },
+    },
+    setStdin(_stdin) {},
+    async runPythonAsync(code) {
+      options.stdout(`stdout:${code}`);
+    },
+  };
+}
+"#,
+        );
+        write_fixture(
+            &pyodide_dir.path().join("pyodide-lock.json"),
+            "{\"packages\":[]}\n",
+        );
+
+        let output = run_python_runner_with_env(
+            &import_cache,
+            pyodide_dir.path(),
+            "print('hello')",
+            &[("PWD", "/workspace")],
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+        assert_eq!(stdout, "cwd:/workspace\nstdout:print('hello')\n");
+    }
+
+    #[test]
     fn materialized_python_runner_prefers_python_file_over_inline_code() {
         assert_node_available();
 

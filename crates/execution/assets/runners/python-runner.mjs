@@ -1522,8 +1522,9 @@ function installPythonGuestImportBlocklist(pyodide) {
 function buildPythonRuntimeEnv() {
   const runtimeEnv = {};
   for (const name of PYTHON_RUNTIME_ENV_NAMES) {
-    if (typeof process.env[name] === 'string') {
-      runtimeEnv[name] = process.env[name];
+    const value = readRunnerEnv(name);
+    if (typeof value === 'string') {
+      runtimeEnv[name] = value;
     }
   }
   return runtimeEnv;
@@ -1543,6 +1544,18 @@ import os as _agentos_os
 for _agentos_key, _agentos_value in _agentos_json.loads(${JSON.stringify(JSON.stringify(runtimeEnv))}).items():
     _agentos_os.environ[_agentos_key] = _agentos_value
 `);
+}
+
+function applyPythonWorkingDirectory(pyodide) {
+  const cwd = buildPythonRuntimeEnv().PWD;
+  if (!cwd || typeof pyodide?.FS?.chdir !== 'function') {
+    return;
+  }
+  try {
+    pyodide.FS.chdir(cwd);
+  } catch (error) {
+    throw wrapPythonStartupError('guest cwd', { cwd }, error);
+  }
 }
 
 function installPythonKernelRpcShims(pyodide) {
@@ -2560,6 +2573,7 @@ try {
   installPythonGuestProcessHardening();
   installPythonGuestImportBlocklist(pyodide);
   installPythonRuntimeEnv(pyodide);
+  applyPythonWorkingDirectory(pyodide);
   applyPythonArgv(pyodide);
   const source = moduleName
     ? `module:${moduleName}`
