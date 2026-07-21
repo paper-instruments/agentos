@@ -115,6 +115,7 @@ describe("host_dir native mount integration", () => {
 
 	test("Bash waits for an external pipeline redirected into a host mount", async () => {
 		if (process.platform !== "win32") fs.chmodSync(tmpDir, 0o700);
+		fs.mkdirSync(path.join(tmpDir, ".feather"));
 		vm = await AgentOs.create({
 			permissions: {
 				fs: "allow",
@@ -122,7 +123,6 @@ describe("host_dir native mount integration", () => {
 				childProcess: "allow",
 				process: "allow",
 				env: "allow",
-				binding: "allow",
 			},
 			defaultSoftware: false,
 			software: [coreutils, grep, sed],
@@ -131,7 +131,38 @@ describe("host_dir native mount integration", () => {
 					path: "/hostmnt",
 					plugin: createHostDirBackend({ hostPath: tmpDir, readOnly: false }),
 				},
+				{
+					path: "/hostmnt/.feather",
+					plugin: createHostDirBackend({
+						hostPath: path.join(tmpDir, ".feather"),
+						readOnly: true,
+					}),
+					readOnly: true,
+				},
 			],
+			limits: {
+				resources: {
+					cpuCount: 4,
+					maxProcesses: 256,
+					maxOpenFds: 1024,
+					maxPipes: 256,
+					maxPtys: 16,
+					maxSockets: 128,
+				},
+				jsRuntime: {
+					v8HeapLimitMb: 256,
+					capturedOutputLimitBytes: 1_048_576,
+					stdinBufferLimitBytes: 1_048_576,
+				},
+				python: {
+					outputBufferMaxBytes: 1_048_576,
+					maxOldSpaceMb: 256,
+				},
+				wasm: {
+					capturedOutputLimitBytes: 1_048_576,
+					runnerHeapLimitMb: 256,
+				},
+			},
 		});
 		fs.writeFileSync(path.join(tmpDir, "direct-input.txt"), "alpha\nbeta\n");
 
