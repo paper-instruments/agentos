@@ -43,12 +43,26 @@ jobs:
         with:
           name: wasm-commands
           path: packages/runtime-core/commands
+      - name: Verify pinned command artifact
+        shell: pwsh
+        run: |
+          $requiredCommands = @('bash', 'grep', 'egrep', 'fgrep', 'sed')
+          $missingCommands = @(
+            $requiredCommands | Where-Object {
+              -not (Test-Path -LiteralPath "packages/runtime-core/commands/$_" -PathType Leaf)
+            }
+          )
+          if ($missingCommands.Count -gt 0) {
+            throw "WASM command artifact is missing: $($missingCommands -join ', ')"
+          }
       - name: Restore JavaScript build outputs
         shell: pwsh
         run: tar -xzf ci-artifacts/js/agentos-js-dist.tar.gz
       - name: Assemble pinned command packages under test
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           pnpm --filter @agentos-software/coreutils build:runtime
           pnpm --filter @agentos-software/grep exec agentos-toolchain stage --commands-dir ../../packages/runtime-core/commands --if-missing error
           pnpm --filter @agentos-software/grep exec tsc
@@ -161,8 +175,14 @@ jobs:
         with:
           path: packages/runtime-core/commands
           key: >-
-            wasm-command-bundle-v1-${{ hashFiles(
+            wasm-command-bundle-v2-${{ hashFiles(
               'toolchain/**',
+              'software/coreutils/agentos-package.json',
+              'software/coreutils/native/**',
+              'software/grep/agentos-package.json',
+              'software/grep/native/**',
+              'software/sed/agentos-package.json',
+              'software/sed/native/**',
               'packages/runtime-core/scripts/copy-wasm-commands.mjs'
             ) }}
       - uses: pnpm/action-setup@v4
@@ -186,9 +206,19 @@ jobs:
       - if: steps.wasm-command-cache.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-runtime-core...'
       - if: steps.wasm-command-cache.outputs.cache-hit != 'true'
-        run: make -C toolchain pr-commands
+        run: >-
+          make -C toolchain
+          pr-commands
+          cmd/grep
+          cmd/egrep
+          cmd/fgrep
+          cmd/sed
       - if: steps.wasm-command-cache.outputs.cache-hit != 'true'
-        run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require-coreutils
+        run: |
+          node packages/runtime-core/scripts/copy-wasm-commands.mjs
+          for command in bash grep egrep fgrep sed; do
+            test -f "packages/runtime-core/commands/$command"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: wasm-commands
