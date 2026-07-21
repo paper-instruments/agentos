@@ -144,6 +144,7 @@ describe("host_dir native mount integration", () => {
 			{
 				cwd: "/hostmnt",
 				env: {
+					AGENTOS_TRACE_HOST_PROCESS: "1",
 					HOME: "/hostmnt",
 					PWD: "/hostmnt",
 				},
@@ -167,6 +168,9 @@ describe("host_dir native mount integration", () => {
 			path.join(tmpDir, "result.txt"),
 			"utf8",
 		);
+		if (directHostAtExit !== "beta\n" || pipelineHostAtExit !== "BETA\n") {
+			console.error("Bash redirect trace", stderr);
+		}
 
 		expect(exitCode, stderr || stdout).toBe(0);
 		expect(stdout).toBe("123");
