@@ -4,6 +4,6 @@
 	"type": "commonjs",
 	"dependencies": {
 		"@hono/node-server": "1.19.12",
-		"hono": "4.12.9"
+		"hono": "4.13.11"
 	}
 }
